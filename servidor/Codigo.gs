@@ -50,6 +50,7 @@ const MODELO_RESERVA = 'gemini-2.5-flash';     // se usa si los otros están sat
  *    Copia la URL que termina en /exec y pégala en web/config.js
  * ------------------------------------------------------------------------------------------------ */
 
+const VERSION_SERVIDOR = '2026-11-20.3';
 const HOJA = 'datos';
 const TROZO = 45000; // una celda admite 50.000 caracteres: los documentos grandes se reparten en varias columnas
 
@@ -89,7 +90,7 @@ function atender(q) {
   const rol = rolDe(q.codigo);
   if (!rol) throw fallo('Código de empresa incorrecto', 'no_autorizado');
   switch (q.accion) {
-    case 'entrar': return {ok: true, rol: rol, ia: !!claveGemini_(), vacio: hoja().getLastRow() < 2};
+    case 'entrar': return {ok: true, rol: rol, ia: !!claveGemini_(), vacio: hoja().getLastRow() < 2, version: VERSION_SERVIDOR};
     case 'leer': return leer(q.ver);
     case 'guardar': case 'actualizar': case 'borrar': return escribir(q.accion, q.col, q.id, q.data, rol);
     case 'sembrar': return sembrar(q.docs, rol);
@@ -402,95 +403,4 @@ const DATOS_INICIALES = [
 function probarGemini() {
   const r = ia({prompt: 'Responde con este JSON: {"hola": "mundo"}', nivel: 'quick'});
   Logger.log(r);
-}
-
-/* ---------- Actualización automática desde GitHub ----------
- * Cada 15 minutos el servidor mira si hay una versión nueva de este archivo en GitHub
- * (dinse-sl/parte-a-pedido, carpeta servidor). Si la hay, se copia a este proyecto y
- * actualiza la implementación web, sin cambiar la URL. La clave y los códigos no se tocan:
- * están guardados en el proyecto (guardarClaves).
- * Para activarla, una sola vez: ejecuta «activarActualizacionAutomatica». */
-const REPO_GITHUB = 'dinse-sl/parte-a-pedido';
-const RAMA_GITHUB = 'main';
-
-function activarActualizacionAutomatica() {
-  ScriptApp.getProjectTriggers().forEach(function (t) {
-    if (t.getHandlerFunction() === 'actualizarDesdeGitHub') ScriptApp.deleteTrigger(t);
-  });
-  ScriptApp.newTrigger('actualizarDesdeGitHub').timeBased().everyMinutes(15).create();
-  Logger.log('Actualización automática activada: se comprueba GitHub cada 15 minutos.');
-  actualizarDesdeGitHub(true);
-}
-
-function desactivarActualizacionAutomatica() {
-  ScriptApp.getProjectTriggers().forEach(function (t) {
-    if (t.getHandlerFunction() === 'actualizarDesdeGitHub') ScriptApp.deleteTrigger(t);
-  });
-  Logger.log('Actualización automática desactivada.');
-}
-
-function api_(metodo, ruta, cuerpo) {
-  const opciones = {method: metodo, headers: {Authorization: 'Bearer ' + ScriptApp.getOAuthToken()}, muteHttpExceptions: true, contentType: 'application/json'};
-  if (cuerpo) opciones.payload = JSON.stringify(cuerpo);
-  const res = UrlFetchApp.fetch('https://script.googleapis.com/v1/projects/' + ScriptApp.getScriptId() + ruta, opciones);
-  const code = res.getResponseCode(), texto = res.getContentText();
-  if (code !== 200) {
-    if (/has not been used|is disabled|SERVICE_DISABLED|User has not enabled the Apps Script API/i.test(texto)) {
-      throw new Error('Falta activar la API de Apps Script: entra en https://script.google.com/home/usersettings y pon «API de Google Apps Script» en Activado.');
-    }
-    throw new Error('Apps Script API ' + code + ': ' + texto.slice(0, 300));
-  }
-  return JSON.parse(texto || '{}');
-}
-
-function desdeGitHub_(archivo) {
-  const res = UrlFetchApp.fetch('https://raw.githubusercontent.com/' + REPO_GITHUB + '/' + RAMA_GITHUB + '/servidor/' + archivo + '?t=' + Date.now(), {muteHttpExceptions: true});
-  if (res.getResponseCode() !== 200) throw new Error('No se pudo leer ' + archivo + ' de GitHub (HTTP ' + res.getResponseCode() + ')');
-  return res.getContentText();
-}
-
-function actualizarDesdeGitHub(forzarAviso) {
-  const lock = LockService.getScriptLock();
-  if (!lock.tryLock(1000)) return;
-  try {
-    const props = PropertiesService.getScriptProperties();
-    const codigo = desdeGitHub_('Codigo.gs');
-    const manifiesto = desdeGitHub_('appsscript.json');
-    const huella = Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, codigo + '\n' + manifiesto));
-    if (props.getProperty('HUELLA_GITHUB') === huella) {
-      if (forzarAviso) Logger.log('El servidor ya tiene la última versión de GitHub.');
-      return;
-    }
-    /* comprobaciones básicas antes de cambiar nada */
-    if (codigo.length < 5000 || codigo.indexOf('function doPost') < 0 || codigo.indexOf('function actualizarDesdeGitHub') < 0) throw new Error('La versión de GitHub no parece completa: no se actualiza.');
-    JSON.parse(manifiesto);
-    const actual = api_('get', '/content');
-    let puesto = false;
-    const archivos = (actual.files || []).map(function (f) {
-      if (f.type === 'JSON' && f.name === 'appsscript') return {name: f.name, type: f.type, source: manifiesto};
-      if (f.type === 'SERVER_JS' && !puesto) { puesto = true; return {name: f.name, type: f.type, source: codigo}; }
-      return {name: f.name, type: f.type, source: f.source};
-    });
-    if (!puesto) archivos.push({name: 'Código', type: 'SERVER_JS', source: codigo});
-    if (!archivos.some(function (f) { return f.type === 'JSON'; })) archivos.push({name: 'appsscript', type: 'JSON', source: manifiesto});
-    api_('put', '/content', {files: archivos});
-    const fecha = Utilities.formatDate(new Date(), 'Europe/Madrid', 'yyyy-MM-dd HH:mm');
-    const version = api_('post', '/versions', {description: 'GitHub ' + fecha});
-    const lista = api_('get', '/deployments').deployments || [];
-    let n = 0;
-    lista.forEach(function (d) {
-      const web = (d.entryPoints || []).some(function (e) { return e.entryPointType === 'WEB_APP'; });
-      if (!web || !d.deploymentConfig || !d.deploymentConfig.versionNumber) return; // la implementación «de prueba» no se toca
-      api_('put', '/deployments/' + d.deploymentId, {deploymentConfig: {versionNumber: version.versionNumber, manifestFileName: 'appsscript', description: 'Parte a Pedido · GitHub ' + fecha}});
-      n++;
-    });
-    props.setProperty('HUELLA_GITHUB', huella);
-    props.setProperty('ULTIMA_ACTUALIZACION', fecha + ' · versión ' + version.versionNumber);
-    Logger.log('Servidor actualizado desde GitHub: versión ' + version.versionNumber + ', ' + n + ' implementación(es) web.');
-  } catch (e) {
-    console.log('Actualización desde GitHub: ' + e.message);
-    if (forzarAviso) throw e;
-  } finally {
-    lock.releaseLock();
-  }
 }

@@ -13,6 +13,6 @@ App para que los técnicos rellenen los partes de actuación y la oficina prepar
 ## Cómo se actualiza
 
 - Cambios en `web/`: al guardarlos en GitHub, Netlify publica la web sola en uno o dos minutos.
-- Cambios en `servidor/Codigo.gs`: hay que copiarlo a Apps Script a mano (con las tres líneas vacías)
-  y hacer Implementar → Gestionar implementaciones → lápiz → **Nueva versión**.
+- Cambios en `servidor/`: el propio servidor los copia de GitHub cada 15 minutos (función `actualizarDesdeGitHub`)
+  y actualiza la implementación web sin cambiar la URL. Se activa una vez con `activarActualizacionAutomatica`.
 - El catálogo de Sage con precios (`parte-a-pedido-catalogo.txt`) no está aquí: va en Google Drive.

@@ -20,12 +20,37 @@
   }
 
   function error(msg, code) { var e = new Error(msg); e.code = code || 'error'; return e; }
-  function llamar(accion, datos, signal) {
+  function llamar(accion, datos, signal, maxMs) {
     var cuerpo = Object.assign({accion: accion, codigo: codigo}, datos || {});
-    return fetch(SERVIDOR, {method: 'POST', body: JSON.stringify(cuerpo), headers: {'Content-Type': 'text/plain;charset=utf-8'}, redirect: 'follow', signal: signal})
-      .then(function (r) { if (!r.ok) throw error('HTTP ' + r.status, r.status === 429 ? 'rate_limited' : 'unavailable'); return r.json(); },
-            function (e) { if (e && e.name === 'AbortError') throw error('Cancelado', 'cancelled'); throw error('Sin conexión', 'unavailable'); })
-      .then(function (j) { if (!j || !j.ok) throw error((j && j.error) || 'Error del servidor', (j && j.code) || 'error'); return j; });
+    /* tiempo máximo: si el servidor no contesta, se avisa en vez de quedarse cargando */
+    var ctl = new AbortController(), agotado = false;
+    var reloj = setTimeout(function () { agotado = true; ctl.abort(); }, maxMs || 60000);
+    if (signal) { if (signal.aborted) ctl.abort(); else signal.addEventListener('abort', function () { ctl.abort(); }); }
+    return fetch(SERVIDOR, {method: 'POST', body: JSON.stringify(cuerpo), headers: {'Content-Type': 'text/plain;charset=utf-8'}, redirect: 'follow', signal: ctl.signal})
+      .then(function (r) { if (!r.ok) throw error('HTTP ' + r.status, r.status === 429 ? 'rate_limited' : 'unavailable'); return r.text(); },
+            function (e) {
+              if (agotado) throw error('El servidor no ha contestado a tiempo', 'timeout');
+              if (e && e.name === 'AbortError') throw error('Cancelado', 'cancelled');
+              throw error('Sin conexión con el servidor', 'unavailable');
+            })
+      .then(function (t) {
+        var j = null; try { j = JSON.parse(t); } catch (_) {}
+        if (!j) throw error(/tiempo máximo|maximum execution time/i.test(t) ? 'El servidor de Google ha superado su tiempo máximo' : 'Respuesta no válida del servidor', 'unavailable');
+        if (!j.ok) throw error(j.error || 'Error del servidor', j.code || 'error');
+        return j;
+      })
+      .finally(function () { clearTimeout(reloj); });
+  }
+  /* Mientras Gemini lee el parte, se enseñan los segundos que lleva */
+  function contador() {
+    var t0 = Date.now();
+    var id = setInterval(function () {
+      var el = document.querySelector('#p-foto-estado > span:not(.spin)');
+      if (!el) return;
+      var s = Math.round((Date.now() - t0) / 1000);
+      el.textContent = 'Leyendo el parte con Gemini… ' + s + ' s (suele tardar menos de un minuto)';
+    }, 1000);
+    return function () { clearInterval(id); };
   }
 
   /* ---------- Acceso con código de empresa ---------- */
@@ -201,7 +226,11 @@
       opts = opts || {};
       var imgs = opts.images || [];
       return Promise.all(imgs.map(function (b) { return aBase64(b).then(function (s) { return {mime: b.type || 'image/jpeg', b64: s}; }); }))
-        .then(function (imagenes) { return llamar('ia', {prompt: prompt + '\n\nResponde únicamente con JSON válido, sin texto antes ni después.', imagenes: imagenes, nivel: opts.modelTier === 'quick' ? 'quick' : 'default'}, opts.signal); })
+        .then(function (imagenes) {
+          var parar = imagenes.length ? contador() : function () {};
+          return llamar('ia', {prompt: prompt + '\n\nResponde únicamente con JSON válido, sin texto antes ni después.', imagenes: imagenes, nivel: opts.modelTier === 'quick' ? 'quick' : 'default'}, opts.signal, CFG.iaMaxMs || 180000)
+            .finally(parar);
+        })
         .then(function (j) { return sacarJson(j.texto); });
     }
   };
@@ -210,7 +239,7 @@
   var fotos = {};
   var assets = {
     upload: function (blob) {
-      return aBase64(blob).then(function (b64) { return llamar('foto', {b64: b64, mime: blob.type || 'image/jpeg'}); }).then(function (j) { return {id: j.id}; });
+      return aBase64(blob).then(function (b64) { return llamar('foto', {b64: b64, mime: blob.type || 'image/jpeg'}, null, 120000); }).then(function (j) { return {id: j.id}; });
     }
   };
   function cargarFotos(raiz) {
@@ -229,7 +258,7 @@
   var fetchOriginal = window.fetch.bind(window);
   window.fetch = function (url, opts) {
     if (typeof url === 'string' && /(^|\/)catalogo\.txt$/.test(url)) {
-      return entrar().then(function () { return llamar('catalogo'); }).then(function (r) {
+      return entrar().then(function () { return llamar('catalogo', null, null, 120000); }).then(function (r) {
         return new Response(r.texto, {status: 200, headers: {'Content-Type': 'text/plain'}});
       });
     }

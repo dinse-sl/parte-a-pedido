@@ -34,6 +34,7 @@ function doPost(e) {
     const q = JSON.parse(e.postData.contents);
     r = atender(q);
   } catch (err) {
+    console.log('Error: ' + (err && err.message || err));
     r = {ok: false, error: String(err && err.message || err), code: (err && err.code) || 'error'};
   }
   return salida(r);
@@ -162,17 +163,28 @@ function ia(q) {
   if (!GEMINI_API_KEY) throw fallo('Falta la clave de Gemini en el servidor', 'sampling_disabled');
   const partes = (q.imagenes || []).map(function (im) { return {inline_data: {mime_type: im.mime || 'image/jpeg', data: im.b64}}; });
   partes.push({text: String(q.prompt || '')});
-  const cuerpo = {contents: [{role: 'user', parts: partes}], generationConfig: {responseMimeType: 'application/json', temperature: 0.1}};
   const modelos = [q.nivel === 'quick' ? MODELO_RAPIDO : MODELO, MODELO_RESERVA];
   let ultimo = null;
   for (let m = 0; m < modelos.length; m++) {
-    const res = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + modelos[m] + ':generateContent', {
-      method: 'post', contentType: 'application/json', headers: {'x-goog-api-key': GEMINI_API_KEY},
-      payload: JSON.stringify(cuerpo), muteHttpExceptions: true
-    });
-    const code = res.getResponseCode();
-    let j = {};
-    try { j = JSON.parse(res.getContentText()); } catch (e) {}
+    /* Leer un parte no necesita «pensar» mucho: con poco razonamiento responde bastante más rápido */
+    const pensar = /^gemini-2\./.test(modelos[m]) ? {thinkingBudget: 0} : {thinkingLevel: 'low'};
+    let conPensar = true, res, code, j, t0 = Date.now();
+    for (let intento = 0; intento < 2; intento++) {
+      const gc = {responseMimeType: 'application/json', temperature: 0.1};
+      if (conPensar) gc.thinkingConfig = pensar;
+      t0 = Date.now();
+      res = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + modelos[m] + ':generateContent', {
+        method: 'post', contentType: 'application/json', headers: {'x-goog-api-key': GEMINI_API_KEY},
+        payload: JSON.stringify({contents: [{role: 'user', parts: partes}], generationConfig: gc}), muteHttpExceptions: true
+      });
+      code = res.getResponseCode();
+      j = {};
+      try { j = JSON.parse(res.getContentText()); } catch (e) {}
+      /* si el modelo no admite el ajuste de razonamiento, se repite sin él */
+      if (code === 400 && conPensar && /thinking/i.test(JSON.stringify(j))) { conPensar = false; continue; }
+      break;
+    }
+    console.log('Gemini ' + modelos[m] + ' · ' + (q.imagenes || []).length + ' imágenes · HTTP ' + code + ' · ' + Math.round((Date.now() - t0) / 1000) + ' s');
     if (code === 200) {
       const c = (j.candidates || [])[0];
       const texto = c && c.content && c.content.parts ? c.content.parts.map(function (p) { return p.text || ''; }).join('') : '';
@@ -181,7 +193,7 @@ function ia(q) {
     }
     if (code === 429) throw fallo('Se ha llegado al límite gratuito de Gemini. Prueba dentro de un rato.', 'rate_limited');
     if (code === 400 && /API key/i.test(JSON.stringify(j))) throw fallo('La clave de Gemini no es válida', 'sampling_disabled');
-    ultimo = fallo('Gemini respondió ' + code + ': ' + (j.error && j.error.message || ''), code === 404 ? 'not_found' : 'unavailable');
+    ultimo = fallo('Gemini respondió ' + code + ': ' + String(j.error && j.error.message || '').slice(0, 200), code === 404 ? 'not_found' : 'unavailable');
     if (code !== 404) break; // solo se prueba el modelo de reserva si el modelo no existe
   }
   throw ultimo;

@@ -2180,7 +2180,8 @@ function errorIA(e){
   if (c === 'invalid_json' || c === 'empty_completion') return 'No se ha entendido la respuesta al leer el parte. Vuelve a intentarlo.';
   if (e && e.message && /PDF/i.test(e.message)) return 'No se ha podido abrir el PDF. Prueba con una foto del parte.';
   if (e && e.message === 'imagen') return 'No se ha podido abrir la imagen. Prueba con una foto en JPG o PNG.';
-  return 'Ha fallado la lectura del parte. Vuelve a intentarlo.';
+  if (c === 'timeout') return 'Gemini no ha contestado en 3 minutos. Vuelve a intentarlo; si se repite, rellena el parte a mano.';
+  return 'Ha fallado la lectura del parte' + (e && e.message ? ` (${e.message})` : '') + '. Vuelve a intentarlo.';
 }
 async function leerFoto(file){
   const conIA = S.iaOk === true && !!S.sample;

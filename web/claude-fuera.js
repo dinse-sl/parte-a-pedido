@@ -229,7 +229,8 @@
     throw error('Respuesta no válida', 'invalid_json');
   }
   var sample = {
-    limits: function () { return Promise.resolve({images: {maxCount: 3}}); },
+    /* una sola imagen del parte entero: se sube mucho antes desde el móvil y Gemini responde antes */
+    limits: function () { return Promise.resolve({images: {maxCount: 1}}); },
     json: function (prompt, opts) {
       opts = opts || {};
       var imgs = opts.images || [];
@@ -239,7 +240,7 @@
           return llamar('ia', {prompt: prompt + '\n\nResponde únicamente con JSON válido, sin texto antes ni después.', imagenes: imagenes, nivel: opts.modelTier === 'quick' ? 'quick' : 'default'}, opts.signal, CFG.iaMaxMs || 180000)
             .finally(parar);
         })
-        .then(function (j) { return sacarJson(j.texto); });
+        .then(function (j) { if (j.modelo) console.log('Gemini: ' + j.modelo + ' en ' + j.segundos + ' s'); return sacarJson(j.texto); });
     }
   };
 

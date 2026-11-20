@@ -40,9 +40,9 @@ function guardarClaves() {
 }
 
 /* Modelos de Gemini (puedes cambiarlos si Google los renombra) */
-const MODELO        = 'gemini-3.8-flash';      // leer la foto del parte
-const MODELO_RAPIDO = 'gemini-3.5-flash-lite'; // elegir opciones de material
-const MODELO_RESERVA = 'gemini-2.5-flash';     // se usa si los otros están saturados o no existen
+const MODELO         = 'gemini-2.5-flash';      // leer la foto del parte: rápido y fiable sin razonamiento
+const MODELO_RAPIDO  = 'gemini-3.5-flash-lite'; // elegir opciones de material
+const MODELO_RESERVA = 'gemini-3.8-flash';      // el más listo pero más lento: solo si los otros fallan
 
 /* 2) Arriba, elige la función «instalar» y pulsa ▶ Ejecutar. Acepta los permisos.
  *    Crea la Hoja «Parte a Pedido - datos» en tu Drive (con los datos iniciales) y prueba Gemini.
@@ -50,7 +50,7 @@ const MODELO_RESERVA = 'gemini-2.5-flash';     // se usa si los otros están sat
  *    Copia la URL que termina en /exec y pégala en web/config.js
  * ------------------------------------------------------------------------------------------------ */
 
-const VERSION_SERVIDOR = '2026-11-20.4';
+const VERSION_SERVIDOR = '2026-11-20.5';
 const HOJA = 'datos';
 const TROZO = 45000; // una celda admite 50.000 caracteres: los documentos grandes se reparten en varias columnas
 
@@ -197,12 +197,12 @@ function ia(q) {
   const partes = (q.imagenes || []).map(function (im) { return {inline_data: {mime_type: im.mime || 'image/jpeg', data: im.b64}}; });
   partes.push({text: String(q.prompt || '')});
   /* Orden de modelos: el elegido primero; si está saturado (503) o sin cupo (429), se prueba el siguiente */
-  const modelos = (q.nivel === 'quick' ? [MODELO_RAPIDO, MODELO_RESERVA, MODELO] : [MODELO, MODELO_RESERVA, MODELO_RAPIDO])
+  const modelos = (q.nivel === 'quick' ? [MODELO_RAPIDO, MODELO, MODELO_RESERVA] : [MODELO, MODELO_RAPIDO, MODELO_RESERVA])
     .filter(function (x, i, a) { return x && a.indexOf(x) === i; });
   const inicio = Date.now();
   let ultimo = null, limite = false;
   for (let m = 0; m < modelos.length; m++) {
-    if (Date.now() - inicio > 140000) break; // la app espera como mucho 3 minutos
+    if (Date.now() - inicio > 75000) break; // no empezar otro modelo pasado minuto y cuarto
     /* Leer un parte no necesita «pensar» mucho: con poco razonamiento responde bastante más rápido */
     const pensar = /^gemini-2\./.test(modelos[m]) ? {thinkingBudget: 0} : {thinkingLevel: 'low'};
     let conPensar = true, res, code, j, t0 = Date.now();
@@ -224,7 +224,7 @@ function ia(q) {
       /* si el modelo no admite el ajuste de razonamiento, se repite sin él */
       if (code === 400 && conPensar && /thinking/i.test(JSON.stringify(j))) { conPensar = false; continue; }
       /* saturado: un segundo intento con el mismo modelo tras una pausa corta */
-      if ((code === 503 || code === 500) && intento === 0 && Date.now() - inicio < 60000) { Utilities.sleep(3000); continue; }
+      if ((code === 503 || code === 500) && intento === 0 && Date.now() - inicio < 20000) { Utilities.sleep(2000); continue; }
       break;
     }
     console.log('Gemini ' + modelos[m] + ' · ' + (q.imagenes || []).length + ' imágenes · HTTP ' + code + ' · ' + Math.round((Date.now() - t0) / 1000) + ' s');
@@ -232,7 +232,7 @@ function ia(q) {
       const c = (j.candidates || [])[0];
       const texto = c && c.content && c.content.parts ? c.content.parts.map(function (p) { return p.text || ''; }).join('') : '';
       if (!texto) throw fallo('Gemini no ha devuelto nada', j.promptFeedback && j.promptFeedback.blockReason ? 'refused' : 'empty_completion');
-      return {ok: true, texto: texto, modelo: modelos[m]};
+      return {ok: true, texto: texto, modelo: modelos[m], segundos: Math.round((Date.now() - inicio) / 1000)};
     }
     if (code === 400 && /API key/i.test(JSON.stringify(j))) throw fallo('La clave de Gemini no es válida', 'sampling_disabled');
     if (code === 429) limite = true;

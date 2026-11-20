@@ -2,13 +2,42 @@
  * Parte a Pedido · servidor (Google Apps Script)
  * Guarda los partes, instalaciones y reglas en una Hoja de Google que crea él solo en tu Drive,
  * guarda las fotos en Google Drive y llama a Gemini para leer los partes en papel.
- * La clave de Gemini se queda aquí, no llega a los móviles.
+ * La clave de Gemini se queda en tu Google, no llega a los móviles.
  *
- * 1) Rellena estas tres líneas y guarda:
+ * 1) SOLO LA PRIMERA VEZ (o para cambiar la clave o un código): rellena estas tres líneas, guarda
+ *    y ejecuta «guardarClaves». Quedan guardadas en la configuración del proyecto
+ *    (Configuración del proyecto → Propiedades de la secuencia de comandos).
+ *    Después puedes dejarlas vacías: cuando pegues una versión nueva del código no hace falta rellenarlas.
+ *    Si una línea tiene algo escrito, manda sobre lo guardado.
  */
 const GEMINI_API_KEY  = '';          // Clave de https://aistudio.google.com/apikey
 const CODIGO_TECNICOS = '';          // Código que escribirán los técnicos (ej. DINSE-TEC-4821)
 const CODIGO_OFICINA  = '';          // Código de la oficina: además puede cambiar las reglas (ej. DINSE-OF-9374)
+
+/* La clave y los códigos: lo escrito arriba o, si está vacío, lo guardado en el proyecto */
+function ajuste_(nombre, escrito) {
+  const v = String(escrito || '').trim();
+  if (v) return v;
+  return String(PropertiesService.getScriptProperties().getProperty(nombre) || '').trim();
+}
+function claveGemini_()    { return ajuste_('GEMINI_API_KEY', GEMINI_API_KEY); }
+function codigoTecnicos_() { return ajuste_('CODIGO_TECNICOS', CODIGO_TECNICOS); }
+function codigoOficina_()  { return ajuste_('CODIGO_OFICINA', CODIGO_OFICINA); }
+
+/* Ejecuta esta función para guardar en el proyecto lo que hayas escrito en las tres líneas de arriba */
+function guardarClaves() {
+  const p = PropertiesService.getScriptProperties();
+  const datos = {GEMINI_API_KEY: GEMINI_API_KEY, CODIGO_TECNICOS: CODIGO_TECNICOS, CODIGO_OFICINA: CODIGO_OFICINA};
+  const guardadas = [];
+  Object.keys(datos).forEach(function (k) {
+    const v = String(datos[k] || '').trim();
+    if (v) { p.setProperty(k, v); guardadas.push(k); }
+  });
+  if (codigoTecnicos_() && codigoTecnicos_() === codigoOficina_()) throw new Error('El código de técnicos y el de oficina tienen que ser distintos.');
+  Logger.log(guardadas.length ? 'Guardado en el proyecto: ' + guardadas.join(', ') : 'Las tres líneas están vacías: no se ha cambiado nada.');
+  Logger.log('Clave de Gemini: ' + (claveGemini_() ? 'guardada' : 'FALTA') + ' · Código técnicos: ' + (codigoTecnicos_() ? 'guardado' : 'FALTA') + ' · Código oficina: ' + (codigoOficina_() ? 'guardado' : 'FALTA'));
+  Logger.log('Ya puedes dejar vacías las tres líneas. Si has cambiado algo, haz una nueva versión de la implementación.');
+}
 
 /* Modelos de Gemini (puedes cambiarlos si Google los renombra) */
 const MODELO        = 'gemini-3.8-flash';      // leer la foto del parte
@@ -49,17 +78,18 @@ function fallo(msg, code) { const e = new Error(msg); e.code = code; return e; }
 function rolDe(codigo) {
   codigo = String(codigo || '').trim();
   if (!codigo) return null;
-  if (CODIGO_OFICINA && codigo === CODIGO_OFICINA) return 'oficina';
-  if (CODIGO_TECNICOS && codigo === CODIGO_TECNICOS) return 'tecnico';
+  const of = codigoOficina_(), tec = codigoTecnicos_();
+  if (of && codigo === of) return 'oficina';
+  if (tec && codigo === tec) return 'tecnico';
   return null;
 }
 
 function atender(q) {
-  if (!CODIGO_TECNICOS || !CODIGO_OFICINA) throw fallo('Faltan los códigos de empresa en el servidor', 'sin_configurar');
+  if (!codigoTecnicos_() || !codigoOficina_()) throw fallo('Faltan los códigos de empresa en el servidor', 'sin_configurar');
   const rol = rolDe(q.codigo);
   if (!rol) throw fallo('Código de empresa incorrecto', 'no_autorizado');
   switch (q.accion) {
-    case 'entrar': return {ok: true, rol: rol, ia: !!GEMINI_API_KEY, vacio: hoja().getLastRow() < 2};
+    case 'entrar': return {ok: true, rol: rol, ia: !!claveGemini_(), vacio: hoja().getLastRow() < 2};
     case 'leer': return leer(q.ver);
     case 'guardar': case 'actualizar': case 'borrar': return escribir(q.accion, q.col, q.id, q.data, rol);
     case 'sembrar': return sembrar(q.docs, rol);
@@ -160,7 +190,8 @@ function sembrar(docs, rol) {
 
 /* ---------- Gemini ---------- */
 function ia(q) {
-  if (!GEMINI_API_KEY) throw fallo('Falta la clave de Gemini en el servidor', 'sampling_disabled');
+  const clave = claveGemini_();
+  if (!clave) throw fallo('Falta la clave de Gemini en el servidor', 'sampling_disabled');
   const partes = (q.imagenes || []).map(function (im) { return {inline_data: {mime_type: im.mime || 'image/jpeg', data: im.b64}}; });
   partes.push({text: String(q.prompt || '')});
   /* Orden de modelos: el elegido primero; si está saturado (503) o sin cupo (429), se prueba el siguiente */
@@ -179,7 +210,7 @@ function ia(q) {
       t0 = Date.now();
       try {
         res = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + modelos[m] + ':generateContent', {
-          method: 'post', contentType: 'application/json', headers: {'x-goog-api-key': GEMINI_API_KEY},
+          method: 'post', contentType: 'application/json', headers: {'x-goog-api-key': clave},
           payload: JSON.stringify({contents: [{role: 'user', parts: partes}], generationConfig: gc}), muteHttpExceptions: true
         });
         code = res.getResponseCode();
@@ -255,8 +286,8 @@ function verFoto(id) {
 
 /* Ejecuta esta función una vez desde el editor: crea la Hoja de datos y la carpeta de fotos, carga los datos iniciales y prueba Gemini */
 function instalar() {
-  if (!GEMINI_API_KEY || !CODIGO_TECNICOS || !CODIGO_OFICINA) throw new Error('Rellena antes GEMINI_API_KEY, CODIGO_TECNICOS y CODIGO_OFICINA (arriba del todo) y guarda.');
-  if (CODIGO_TECNICOS === CODIGO_OFICINA) throw new Error('El código de técnicos y el de oficina tienen que ser distintos.');
+  guardarClaves();
+  if (!claveGemini_() || !codigoTecnicos_() || !codigoOficina_()) throw new Error('Rellena antes GEMINI_API_KEY, CODIGO_TECNICOS y CODIGO_OFICINA (arriba del todo) y guarda.');
   const h = hoja();
   if (h.getLastRow() < 2) DATOS_INICIALES.forEach(function (d) { escribir('guardar', d.col, d.id, d.data, 'oficina'); });
   const c = carpeta();

@@ -50,7 +50,7 @@ const MODELO_RESERVA = 'gemini-2.5-flash';     // se usa si los otros están sat
  *    Copia la URL que termina en /exec y pégala en web/config.js
  * ------------------------------------------------------------------------------------------------ */
 
-const VERSION_SERVIDOR = '2026-11-20.3';
+const VERSION_SERVIDOR = '2026-11-20.4';
 const HOJA = 'datos';
 const TROZO = 45000; // una celda admite 50.000 caracteres: los documentos grandes se reparten en varias columnas
 
@@ -90,7 +90,7 @@ function atender(q) {
   const rol = rolDe(q.codigo);
   if (!rol) throw fallo('Código de empresa incorrecto', 'no_autorizado');
   switch (q.accion) {
-    case 'entrar': return {ok: true, rol: rol, ia: !!claveGemini_(), vacio: hoja().getLastRow() < 2, version: VERSION_SERVIDOR};
+    case 'entrar': return {ok: true, rol: rol, ia: !!claveGemini_(), vacio: hoja().getLastRow() < 2, version: VERSION_SERVIDOR, datos: q.conDatos ? leer(null) : null};
     case 'leer': return leer(q.ver);
     case 'guardar': case 'actualizar': case 'borrar': return escribir(q.accion, q.col, q.id, q.data, rol);
     case 'sembrar': return sembrar(q.docs, rol);
@@ -98,6 +98,7 @@ function atender(q) {
     case 'foto': return guardarFoto(q);
     case 'verfoto': return verFoto(q.id);
     case 'catalogo': return catalogo();
+    case 'catalogoInfo': return catalogoInfo();
   }
   throw fallo('Acción desconocida', 'invalid_argument');
 }
@@ -276,11 +277,39 @@ function buscarCatalogos_() {
   return lista;
 }
 function archivoCatalogo() {
+  /* rápido: el archivo que se usó la última vez, si sigue siendo el más reciente */
+  const p = PropertiesService.getScriptProperties();
+  const id = p.getProperty('CATALOGO_ID');
+  if (id) {
+    try {
+      const f = DriveApp.getFileById(id);
+      if (!f.isTrashed() && f.getMimeType() !== MimeType.GOOGLE_DOCS && f.getLastUpdated().getTime() >= Number(p.getProperty('CATALOGO_REVISADO') || 0) - 600000) return f;
+    } catch (e) {}
+  }
+  const encontrado = archivoCatalogoBuscando_();
+  if (encontrado) { p.setProperty('CATALOGO_ID', encontrado.getId()); p.setProperty('CATALOGO_REVISADO', String(encontrado.getLastUpdated().getTime())); }
+  return encontrado;
+}
+function archivoCatalogoBuscando_() {
   const lista = buscarCatalogos_();
   const txt = lista.filter(function (f) { return f.getMimeType() !== MimeType.GOOGLE_DOCS; });
   if (txt.length) return txt[0];
   if (lista.length) throw fallo('Drive ha convertido el catálogo en un documento de Google. Bórralo, desactiva en Drive ⚙ Configuración «Convertir archivos subidos» y súbelo otra vez.', 'not_found');
   return null;
+}
+/* Fecha del catálogo, para que el móvil sepa si el que tiene guardado sigue valiendo (una búsqueda completa cada 10 minutos como mucho) */
+function catalogoInfo() {
+  const cache = CacheService.getScriptCache();
+  let info = cache.get('catalogoInfo');
+  if (!info) {
+    const p = PropertiesService.getScriptProperties();
+    const f = archivoCatalogoBuscando_();
+    if (!f) throw fallo('No encuentro ' + NOMBRE_CATALOGO + ' en tu Google Drive. Súbelo a «Mi unidad» sin cambiarle el nombre.', 'not_found');
+    p.setProperty('CATALOGO_ID', f.getId()); p.setProperty('CATALOGO_REVISADO', String(f.getLastUpdated().getTime()));
+    info = JSON.stringify({fecha: f.getLastUpdated().toISOString(), tam: f.getSize()});
+    cache.put('catalogoInfo', info, 600);
+  }
+  return Object.assign({ok: true}, JSON.parse(info));
 }
 function catalogo() {
   const f = archivoCatalogo();

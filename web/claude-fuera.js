@@ -74,7 +74,7 @@
         var c = inp.value.trim(); if (!c) return;
         err.textContent = 'Comprobando…';
         codigo = c;
-        llamar('entrar').then(function (j) {
+        llamar('entrar', {conDatos: true}).then(function (j) {
           try { localStorage.setItem(CLAVE, codigo); } catch (_) {}
           d.remove(); resolve(j);
         }, function (e) { err.textContent = e.code === 'no_autorizado' ? 'Ese código no es válido.' : 'No hay conexión con el servidor. Prueba otra vez.'; });
@@ -83,9 +83,11 @@
   }
   function entrar() {
     if (sesion) return sesion;
-    sesion = (codigo ? llamar('entrar').catch(function (e) { return pedirCodigo(e.code === 'no_autorizado' ? 'El código guardado ya no vale.' : ''); }) : pedirCodigo(''))
+    sesion = (codigo ? llamar('entrar', {conDatos: true}).catch(function (e) { return pedirCodigo(e.code === 'no_autorizado' ? 'El código guardado ya no vale.' : ''); }) : pedirCodigo(''))
       .then(function (j) {
         mostrarSalir(j.rol);
+        if (j.datos) cargarDatos(j.datos);
+        setTimeout(precargarCatalogo, 1500); /* el catálogo se prepara en segundo plano */
         return j;
       });
     return sesion;
@@ -123,6 +125,12 @@
     });
   }
   function avisarTodo() { Object.keys(oyentesCol).forEach(function (c) { avisar(c); }); Object.keys(oyentesDoc).forEach(function (k) { var c = k.split('/')[0]; if (!oyentesCol[c]) avisar(c); }); }
+  function cargarDatos(j) {
+    var nuevo = {};
+    (j.docs || []).forEach(function (d) { (nuevo[d.col] = nuevo[d.col] || {})[d.id] = d.data; });
+    datos = nuevo; ver = j.ver; listo = true;
+    avisarTodo();
+  }
   var sincronizando = null, pendiente = false;
   function sincronizar() {
     if (sincronizando) { pendiente = true; return sincronizando; }
@@ -256,10 +264,60 @@
   /* ---------- Interfaz que usa la app ---------- */
   /* ---------- Catálogo con precios: no está en la web pública, lo da el servidor tras comprobar el código ---------- */
   var fetchOriginal = window.fetch.bind(window);
+  var CAJA = 'pap-catalogo', cargaCatalogo = null;
+  function claveCatalogo(fecha) { return new Request(location.origin + '/__catalogo/' + encodeURIComponent(fecha)); }
+  function catalogoGuardado() {
+    if (!window.caches) return Promise.resolve(null);
+    return caches.open(CAJA).then(function (c) {
+      return c.keys().then(function (ks) {
+        if (!ks.length) return null;
+        var fecha = decodeURIComponent(ks[0].url.split('/__catalogo/')[1] || '');
+        return c.match(ks[0]).then(function (r) { return r ? r.text().then(function (t) { return {fecha: fecha, texto: t}; }) : null; });
+      });
+    }).catch(function () { return null; });
+  }
+  function descargarCatalogo(fecha) {
+    return llamar('catalogo', null, null, 120000).then(function (r) {
+      if (window.caches && fecha) {
+        caches.open(CAJA).then(function (c) {
+          return c.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return c.delete(k); })); })
+            .then(function () { return c.put(claveCatalogo(fecha), new Response(r.texto, {headers: {'Content-Type': 'text/plain'}})); });
+        }).catch(function () {});
+      }
+      return r.texto;
+    });
+  }
+  /* Devuelve el texto del catálogo: el guardado si sigue al día; si no, lo descarga y lo guarda */
+  function textoCatalogo() {
+    if (cargaCatalogo) return cargaCatalogo;
+    cargaCatalogo = entrar().then(function () {
+      /* si hay uno guardado se usa ya, y se comprueba en segundo plano si en Drive hay otro más nuevo */
+      return catalogoGuardado().then(function (g) {
+        if (!g || g.texto.length < 100000) return null;
+        llamar('catalogoInfo', null, null, 30000).then(function (info) {
+          if (info.fecha !== g.fecha) descargarCatalogo(info.fecha).catch(function () {});
+        }).catch(function () {});
+        return g.texto;
+      });
+    }).then(function (texto) {
+      if (texto) return texto;
+      return llamar('catalogoInfo', null, null, 30000).then(function (info) {
+        if (!window.caches) return descargarCatalogo(null);
+        return caches.open(CAJA).then(function (c) { return c.match(claveCatalogo(info.fecha)); }).catch(function () { return null; })
+          .then(function (r) { return r ? r.text() : descargarCatalogo(info.fecha); });
+      }, function (e) {
+        /* sin servidor o servidor antiguo: el guardado, aunque sea de otro día; si no hay, descarga directa */
+        return catalogoGuardado().then(function (g) { return g ? g.texto : descargarCatalogo(null); });
+      });
+    });
+    cargaCatalogo.catch(function () { cargaCatalogo = null; });
+    return cargaCatalogo;
+  }
+  function precargarCatalogo() { textoCatalogo().catch(function () {}); }
   window.fetch = function (url, opts) {
     if (typeof url === 'string' && /(^|\/)catalogo\.txt$/.test(url)) {
-      return entrar().then(function () { return llamar('catalogo', null, null, 120000); }).then(function (r) {
-        return new Response(r.texto, {status: 200, headers: {'Content-Type': 'text/plain'}});
+      return textoCatalogo().then(function (texto) {
+        return new Response(texto, {status: 200, headers: {'Content-Type': 'text/plain'}});
       }, function (e) {
         /* se enseña el motivo que da el servidor, para saber qué falta */
         var msg = 'No se pudo cargar el catálogo: ' + (e && e.message || 'error') + '. Puedes añadir el material como texto.';

@@ -260,6 +260,11 @@
     if (typeof url === 'string' && /(^|\/)catalogo\.txt$/.test(url)) {
       return entrar().then(function () { return llamar('catalogo', null, null, 120000); }).then(function (r) {
         return new Response(r.texto, {status: 200, headers: {'Content-Type': 'text/plain'}});
+      }, function (e) {
+        /* se enseña el motivo que da el servidor, para saber qué falta */
+        var msg = 'No se pudo cargar el catálogo: ' + (e && e.message || 'error') + '. Puedes añadir el material como texto.';
+        setTimeout(function () { document.querySelectorAll('[data-cat]').forEach(function (el) { el.textContent = msg; }); }, 300);
+        throw e;
       });
     }
     return fetchOriginal(url, opts);

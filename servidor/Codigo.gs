@@ -260,19 +260,42 @@ function guardarFoto(q) {
 }
 /* ---------- Catálogo de Sage con precios: solo lo recibe quien tiene un código válido ---------- */
 const NOMBRE_CATALOGO = 'parte-a-pedido-catalogo.txt';
-function archivoCatalogo() {
+/* Busca el catálogo en tu Drive aunque al subirlo Drive le haya añadido « (1)» al nombre; usa el más reciente */
+function buscarCatalogos_() {
   const yo = Session.getEffectiveUser().getEmail();
-  const it = DriveApp.getFilesByName(NOMBRE_CATALOGO);
+  const it = DriveApp.searchFiles("title contains 'parte-a-pedido-catalogo' and trashed = false");
+  const lista = [];
   while (it.hasNext()) {
     const f = it.next();
-    try { if (!yo || f.getOwner().getEmail() === yo) return f; } catch (e) {}
+    let mio = true;
+    try { const o = f.getOwner(); mio = !yo || !o || o.getEmail() === yo; } catch (e) {}
+    if (mio) lista.push(f);
   }
+  lista.sort(function (a, b) { return b.getLastUpdated() - a.getLastUpdated(); });
+  return lista;
+}
+function archivoCatalogo() {
+  const lista = buscarCatalogos_();
+  const txt = lista.filter(function (f) { return f.getMimeType() !== MimeType.GOOGLE_DOCS; });
+  if (txt.length) return txt[0];
+  if (lista.length) throw fallo('Drive ha convertido el catálogo en un documento de Google. Bórralo, desactiva en Drive ⚙ Configuración «Convertir archivos subidos» y súbelo otra vez.', 'not_found');
   return null;
 }
 function catalogo() {
   const f = archivoCatalogo();
-  if (!f) throw fallo('Falta subir ' + NOMBRE_CATALOGO + ' a Google Drive', 'not_found');
-  return {ok: true, texto: f.getBlob().getDataAsString(), fecha: f.getLastUpdated().toISOString()};
+  if (!f) throw fallo('No encuentro ' + NOMBRE_CATALOGO + ' en tu Google Drive. Súbelo a «Mi unidad» sin cambiarle el nombre.', 'not_found');
+  const texto = f.getBlob().getDataAsString();
+  if (texto.length < 100000) throw fallo('El archivo del catálogo en Drive está incompleto (' + Math.round(texto.length / 1024) + ' KB). Súbelo otra vez.', 'not_found');
+  return {ok: true, texto: texto, fecha: f.getLastUpdated().toISOString()};
+}
+
+/* Para revisar desde el editor: ejecuta esta función y mira el registro */
+function probarCatalogo() {
+  const lista = buscarCatalogos_();
+  if (!lista.length) { Logger.log('No hay ningún archivo «parte-a-pedido-catalogo» en tu Drive (los de la papelera no cuentan). Súbelo a Mi unidad.'); return; }
+  lista.forEach(function (f) { Logger.log('Encontrado: «' + f.getName() + '» · ' + f.getMimeType() + ' · ' + Math.round(f.getSize() / 1024) + ' KB · ' + f.getLastUpdated()); });
+  try { const r = catalogo(); Logger.log('Catálogo correcto: ' + Math.round(r.texto.length / 1048576 * 10) / 10 + ' MB. La app lo puede descargar.'); }
+  catch (e) { Logger.log('PROBLEMA: ' + e.message); }
 }
 
 function verFoto(id) {
@@ -294,8 +317,7 @@ function instalar() {
   Logger.log('Hoja de datos: ' + libro().getUrl());
   Logger.log('Carpeta de fotos: ' + c.getUrl());
   Logger.log('Documentos guardados: ' + (hoja().getLastRow() - 1));
-  const cat = archivoCatalogo();
-  Logger.log(cat ? 'Catálogo de Sage: encontrado (' + Math.round(cat.getSize() / 1048576 * 10) / 10 + ' MB)' : 'Catálogo de Sage: NO encontrado. Sube ' + NOMBRE_CATALOGO + ' a tu Google Drive y vuelve a ejecutar instalar.');
+  probarCatalogo();
   try { Logger.log('Gemini responde: ' + ia({prompt: 'Responde con este JSON: {"hola": "mundo"}', nivel: 'quick'}).texto); }
   catch (e) { Logger.log('Gemini NO responde: ' + e.message); }
   Logger.log('Listo. Ahora: Implementar → Nueva implementación → Aplicación web.');

@@ -233,6 +233,10 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .rev-lista ul,.rev-of{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:3px}
 .rev-lista .rev-tit{margin:4px 0 2px}
 .rev-ok{color:var(--ok);font-weight:600}
+.errors.avisos{background:var(--warn-soft);border-color:var(--warn);color:var(--ink)}
+.errors .ir-campo{font-size:13px;margin-left:4px}
+.avisos-acc{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:8px}
+.ir-aqui{outline:3px solid var(--pen);outline-offset:3px;transition:outline-color .3s}
 .chk-pos{display:flex;align-items:baseline;gap:8px;font-size:14px;cursor:pointer;flex-wrap:wrap}
 .chk-pos input{width:18px;height:18px;margin:0;align-self:center}
 .recorte{grid-column:1/-1;display:flex;flex-direction:column;align-items:flex-start;gap:2px;margin-top:6px;padding:0;border:0;background:none;cursor:zoom-in;max-width:100%;color:inherit}
@@ -562,6 +566,7 @@ const DEFAULTS = {
   precioKm: 0.35,
   margen: 30,
   iva: 21,
+  firmaEnvio: 'avisar',   /* firma del cliente al enviar: 'no' | 'avisar' | 'obligatoria' | 'ct' (obligatoria en CT, aviso en BT) */
   base: 'Calle del Desarrollo 3, 11407 Jerez de la Frontera',
   festivos: [
     {f: '2026-01-01', n: 'Año Nuevo'},
@@ -1098,7 +1103,7 @@ function loadDraft(){
     return Object.assign(nuevoDraft(), d);
   } catch (_) { return null; }
 }
-const saveDraft = debounce(() => { try { localStorage.setItem(DRAFT_KEY, JSON.stringify(S.draft)); } catch (_) {} try { pintarRevision(); } catch (_) {} }, 250);
+const saveDraft = debounce(() => { try { localStorage.setItem(DRAFT_KEY, JSON.stringify(S.draft)); } catch (_) {} try { pintarRevision(); } catch (_) {} const huella = JSON.stringify(S.draft) + (FIRMA && FIRMA.has() ? 'F' : ''); if (S.huellaAvisos && S.huellaAvisos !== huella) { S.envioConfirmado = false; S.huellaAvisos = null; const pe = $('#p-errs'); if (pe && !pe.hidden && pe.classList.contains('avisos')) pe.hidden = true; } }, 250);
 function tecCalc(t){
   if (!t.inicio || !t.fin) return '<span class="muted">Pon la hora de inicio y la de fin.</span>';
   const r = repartir(S.draft.fecha, t.inicio, t.fin, festivosSet(cfg()));
@@ -1200,30 +1205,75 @@ function renderMine(){
   box.innerHTML = mine.length ? `<h2 class="h-sec">${S.myId ? 'Tus últimos partes' : 'Últimos partes'}</h2><ul class="mine-list">${mine.map(p => { const i = instDe(p); return `<li><span class="mono">Nº ${esc(p.numero)}</span><span class="m-fecha muted">${fmtFecha(p.fecha)}</span><span class="ellip">${esc(i ? i.nombre : '—')}</span>${chipEstado(p)}</li>`; }).join('')}</ul>` : '';
 }
 function hideSent(){ $('#p-sent').hidden = true; }
-function validarDraft(d){
-  const e = [];
-  if (!isISO(d.fecha)) e.push('Pon la fecha del trabajo.');
-  if (!d.instalacionId) e.push('Elige la instalación.');
-  else if (d.instalacionId === '__new' && !(d.nuevaInst && String(d.nuevaInst.nombre || '').trim())) e.push('Escribe el nombre de la instalación nueva.');
-  else if (d.instalacionId !== '__new' && !S.inst.some(i => i.id === d.instalacionId)) e.push('La instalación elegida ya no existe: elige otra.');
-  if (d.ct !== true && d.ct !== false) e.push('Indica si el trabajo es en media tensión (CT) o en baja tensión.');
-  if (!String(d.descripcion || '').trim()) e.push('Describe la actuación.');
-  const tecs = d.tecnicos.filter(t => String(t.nombre || '').trim() || t.inicio || t.fin);
-  if (!tecs.length) e.push('Añade al menos un técnico con sus horas.');
-  tecs.forEach((t, i) => {
+const FIRMA_TXT = {no: 'No se pide', avisar: 'Avisar si falta (se puede enviar igualmente)', obligatoria: 'Obligatoria en todos los partes', ct: 'Obligatoria en CT (media tensión); aviso en baja tensión'};
+/* Lo que falta para poder enviar (errores) y lo que conviene mirar (avisos, se puede enviar igualmente). Cada uno lleva el campo al que ir. */
+function comprobarEnvio(d){
+  const e = [], a = [];
+  const err = (msg, sel) => e.push({msg, sel}), av = (msg, sel) => a.push({msg, sel});
+  if (!isISO(d.fecha)) err('Pon la fecha del trabajo.', '#p-fecha');
+  if (!d.instalacionId) err('Elige la instalación.', '#p-inst');
+  else if (d.instalacionId === '__new' && !(d.nuevaInst && String(d.nuevaInst.nombre || '').trim())) err('Escribe el nombre de la instalación nueva.', '#p-n-nombre');
+  else if (d.instalacionId !== '__new' && !S.inst.some(i => i.id === d.instalacionId)) err('La instalación elegida ya no existe: elige otra.', '#p-inst');
+  if (d.ct !== true && d.ct !== false) err('Indica si el trabajo es en media tensión (CT) o en baja tensión.', '#p-ct-mt');
+  if (!String(d.descripcion || '').trim()) err('Describe lo que se ha hecho (descripción de la actuación).', '#p-desc');
+  const tecs = d.tecnicos.map((t, i) => [t, i]).filter(([t]) => String(t.nombre || '').trim() || t.inicio || t.fin);
+  if (!tecs.length) err('Añade al menos un técnico con sus horas.', '#p-tec-n-0');
+  tecs.forEach(([t, i]) => {
     const quien = String(t.nombre || '').trim() || `el técnico ${i + 1}`;
-    if (!String(t.nombre || '').trim()) e.push(`Falta el nombre del técnico ${i + 1}.`);
-    if (!t.inicio || !t.fin) e.push(`Faltan las horas de ${quien}.`);
-    else if (parseHM(t.inicio) === parseHM(t.fin)) e.push(`La hora de fin de ${quien} es igual a la de inicio.`);
+    if (!String(t.nombre || '').trim()) err(`Falta el nombre del técnico ${i + 1}.`, '#p-tec-n-' + i);
+    if (!t.inicio) err(`Falta la hora de inicio de ${quien}.`, '#p-tec-i-' + i);
+    if (!t.fin) err(`Falta la hora de fin de ${quien}.`, '#p-tec-f-' + i);
+    if (t.inicio && t.fin) {
+      if (parseHM(t.inicio) === parseHM(t.fin)) err(`La hora de fin de ${quien} es igual a la de inicio.`, '#p-tec-f-' + i);
+      else { const min = minutosTrabajo(t.inicio, t.fin); if (min > 14 * 60) av(`A ${quien} le salen ${fmtH(min)} de trabajo. ¿Son correctas las horas?`, '#p-tec-f-' + i); }
+    }
   });
-  d.materiales.forEach(m => { if (!(Number(m.cantidad) > 0)) e.push(`La cantidad de «${m.descripcion}» tiene que ser mayor que 0.`); });
-  return e;
+  d.materiales.forEach((m, i) => { if (!(Number(m.cantidad) > 0)) err(`La cantidad de «${m.descripcion}» tiene que ser mayor que 0.`, '#p-mat-c-' + i); });
+  /* firma del cliente según la regla de la oficina */
+  const regla = cfg().firmaEnvio || 'avisar';
+  const firmada = !!(FIRMA && FIRMA.has());
+  if (!firmada && regla !== 'no') {
+    const obligatoria = regla === 'obligatoria' || (regla === 'ct' && d.ct === true);
+    if (obligatoria) err('Falta la firma del cliente.', '#p-firma');
+    else av('No hay firma del cliente.', '#p-firma');
+  }
+  /* lo que quede sin revisar de la foto */
+  if (d.deFoto) {
+    const yaDichos = /^(Firma|Fecha: Falta|.*Falta la hora|.*Falta el nombre|.*cantidad tiene)/;
+    listaRevision(d).filter(x => !yaDichos.test(x)).forEach(x => av('De la foto, sin revisar: ' + x, null));
+  }
+  return {errores: e, avisos: a};
 }
-function showFormErrors(errs){ const b = $('#p-errs'); b.innerHTML = '<b>Revisa el parte:</b><ul>' + errs.map(x => `<li>${esc(x)}</li>`).join('') + '</ul>'; b.hidden = false; b.scrollIntoView({block: 'center', behavior: 'smooth'}); }
+function validarDraft(d){ return comprobarEnvio(d).errores.map(x => x.msg); }
+function irACampo(sel){
+  const el = sel && $(sel); if (!el) return;
+  const caja = el.closest('.tec,.mat,.box') || el;
+  caja.scrollIntoView({block: 'center', behavior: 'smooth'});
+  caja.classList.add('ir-aqui'); setTimeout(() => caja.classList.remove('ir-aqui'), 2200);
+  if (el.matches('input,textarea,select')) setTimeout(() => { try { el.focus({preventScroll: true}); } catch (_) {} }, 350);
+}
+function itemEnvio(x){ return `<li>${esc(x.msg)}${x.sel ? ` <button type="button" class="btn-link ir-campo" data-sel="${esc(x.sel)}">Ir</button>` : ''}</li>`; }
+function showFormErrors(errs){
+  const b = $('#p-errs'); b.classList.remove('avisos');
+  b.innerHTML = `<b>No se puede enviar todavía. Falta:</b><ul>${errs.map(itemEnvio).join('')}</ul>`;
+  b.hidden = false; b.scrollIntoView({block: 'center', behavior: 'smooth'});
+}
+function showAvisosEnvio(avisos){
+  const b = $('#p-errs'); b.classList.add('avisos');
+  b.innerHTML = `<b>Antes de enviar, mira esto:</b><ul>${avisos.map(itemEnvio).join('')}</ul><div class="avisos-acc"><button type="button" class="btn" id="p-enviar-igual">Enviar igualmente</button><span class="hint">o corrígelo y vuelve a pulsar «Enviar».</span></div>`;
+  b.hidden = false; b.scrollIntoView({block: 'center', behavior: 'smooth'});
+  S.huellaAvisos = JSON.stringify(S.draft) + (FIRMA && FIRMA.has() ? 'F' : '');
+}
+document.addEventListener('click', e => {
+  const ir = e.target.closest && e.target.closest('.ir-campo'); if (ir) { irACampo(ir.dataset.sel); return; }
+  if (e.target.id === 'p-enviar-igual') { S.envioConfirmado = true; enviarParte(); }
+});
 async function enviarParte(){
   if (S.busy) return;
-  const d = S.draft; const errs = validarDraft(d);
-  if (errs.length) { showFormErrors(errs); return; }
+  const d = S.draft; const {errores, avisos} = comprobarEnvio(d);
+  if (errores.length) { S.envioConfirmado = false; showFormErrors(errores); return; }
+  if (avisos.length && !S.envioConfirmado) { showAvisosEnvio(avisos); return; }
+  S.envioConfirmado = false;
   $('#p-errs').hidden = true;
   S.busy = true; $('#p-enviar').disabled = true; $('#p-enviar').textContent = 'Enviando…';
   const papel = /^\d+$/.test(String(d.numeroPapel || '')) ? Number(d.numeroPapel) : null;
@@ -1245,7 +1295,8 @@ async function enviarParte(){
       firma: FIRMA && FIRMA.has() ? FIRMA.toDataURL() : null,
       estado: 'pendiente', pedido: null, creadoEn: new Date().toISOString(), creadoPor: S.myId || null,
       numeroPapel: String(d.numeroPapel || ''), deFoto: !!d.deFoto, notasFoto: String(d.notasFoto || ''), foto: null,
-      revisionFoto: listaRevision(d).slice(0, 30)
+      revisionFoto: listaRevision(d).slice(0, 30),
+      avisosEnvio: avisos.filter(x => !/^De la foto, sin revisar/.test(x.msg)).map(x => x.msg).slice(0, 20)
     };
     if (S.fotoBlob && S.db && S.assets) {
       try { parte.foto = (await S.assets.upload(S.fotoBlob, {type: 'image/jpeg'})).id; }
@@ -2518,6 +2569,7 @@ function renderDetalle(force){
     <dl class="ficha">
       <dt>Fecha</dt><dd>${esc(fmtFechaLarga(p.fecha))}</dd>
       ${p.numeroPapel ? `<dt>Nº en papel</dt><dd class="mono">${esc(p.numeroPapel)}</dd>` : ''}
+      ${Array.isArray(p.avisosEnvio) && p.avisosEnvio.length ? `<dt>Enviado con avisos</dt><dd><ul class="rev-of">${p.avisosEnvio.map(x => `<li>${esc(x)}</li>`).join('')}</ul></dd>` : ''}
       ${Array.isArray(p.revisionFoto) && p.revisionFoto.length ? `<dt>Revisar</dt><dd><ul class="rev-of">${p.revisionFoto.map(x => `<li>${esc(x)}</li>`).join('')}</ul></dd>` : ''}
       <dt>Instalación</dt><dd>${esc(inst ? inst.nombre : '—')}</dd>
       <dt>Cliente Sage</dt><dd>${inst && inst.clienteCodigo ? `<span class="mono">${esc(inst.clienteCodigo)}</span>` : '<span class="warn-t">Falta el código de cliente</span>'}<span>${esc((inst && inst.clienteNombre) || '')}</span></dd>
@@ -2802,6 +2854,10 @@ function renderReglas(force){
       <section class="box"><span class="lbl">IVA</span><div class="box-b">
         <div class="field"><label for="r-iva">IVA (%)</label><input id="r-iva" class="num" inputmode="decimal" value="${esc(fmtEdit(r.iva))}"${ro}></div>
       </div></section>
+      <section class="box"><span class="lbl">Al enviar el parte</span><div class="box-b">
+        <div class="field"><label for="r-firma">Firma del cliente</label><select id="r-firma"${ro ? ' disabled' : ''}>${Object.keys(FIRMA_TXT).map(k => `<option value="${k}"${(r.firmaEnvio || 'avisar') === k ? ' selected' : ''}>${esc(FIRMA_TXT[k])}</option>`).join('')}</select></div>
+        <p class="hint">Siempre son obligatorias la fecha, la instalación, la descripción y las horas de inicio y de fin de cada técnico.</p>
+      </div></section>
     </div>
     <section class="box"><span class="lbl">Prueba de horas <span class="lbl-note">para un técnico</span></span><div class="box-b">
       <div class="prueba-in">
@@ -2832,7 +2888,7 @@ function renderReglas(force){
 }
 async function guardarReglas(){
   const r = S.reglas; if (!r) return;
-  const data = {manoObra: r.manoObra, precios: r.precios, articuloKm: r.articuloKm, precioKm: Number(r.precioKm) || 0, margen: Number(r.margen) || 0, iva: Number(r.iva) || 0, base: r.base || '', festivos: r.festivos, tecnicos: r.tecnicos, equivalencias: r.equivalencias || []};
+  const data = {manoObra: r.manoObra, precios: r.precios, articuloKm: r.articuloKm, precioKm: Number(r.precioKm) || 0, margen: Number(r.margen) || 0, iva: Number(r.iva) || 0, base: r.base || '', firmaEnvio: r.firmaEnvio || 'avisar', festivos: r.festivos, tecnicos: r.tecnicos, equivalencias: r.equivalencias || []};
   const ok = await guardar(() => dbSet('config/general', data), 'Reglas guardadas');
   if (ok) { setReglasDirty(false); renderReglas(true); }
 }
@@ -2851,6 +2907,7 @@ function bindReglas(){
       } catch (_) { toast('No se ha podido leer el Excel.', true); }
       return;
     }
+    if (e.target.id === 'r-firma' && S.reglas && puedeEditarReglas()) { S.reglas.firmaEnvio = e.target.value; setReglasDirty(true); return; }
     prueba(e.target);
   });
   v.addEventListener('input', e => {

@@ -262,6 +262,23 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .eq-chks{display:flex;flex-direction:column;gap:6px}
 .eq-chk{display:flex;gap:10px;align-items:center;cursor:pointer}
 .eq-chk input{width:20px;height:20px;margin:0}
+.chip.pl-atr{background:var(--bad-soft);color:var(--bad)}
+.chip.pl-toca{background:var(--warn-soft);color:var(--warn)}
+.chip.pl-mes{background:var(--pen-soft);color:var(--pen)}
+.chip.pl-ok{background:var(--ok-soft);color:var(--ok)}
+.chip.pl-prog{background:var(--ok-soft);color:var(--ok)}
+.pl-form{width:100%;display:flex;flex-direction:column;gap:10px;background:var(--pen-soft);border-radius:4px;padding:10px}
+.pl-meses{display:flex;flex-wrap:wrap;gap:6px 12px}
+.pl-meses label{display:flex;gap:4px;align-items:center;font-size:13px}
+.mant{border:1px solid var(--rule);border-radius:4px;background:var(--sheet);margin-bottom:10px}
+.mant summary{cursor:pointer;padding:8px 10px;display:flex;gap:8px;align-items:center}
+.mant ul{list-style:none;margin:0;padding:0 10px 10px;display:flex;flex-direction:column;gap:8px}
+.mant li{border-top:1px dashed var(--rule);padding-top:8px;display:flex;flex-direction:column;gap:4px}
+.mant li.activo{background:var(--ok-soft);border-radius:4px;padding:8px}
+.mant-l1{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.mant-l2{font-size:13px;color:var(--muted)}
+.mant-acc{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.prog{margin-bottom:12px}
 .tt{border:1px solid var(--rule);border-radius:4px;padding:10px;display:flex;flex-direction:column;gap:8px}
 .tt-head{display:flex;gap:10px;align-items:center}
 .tt-head input{flex:1;min-width:0;font-weight:600}
@@ -480,6 +497,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
         <div class="serial" id="p-num" title="Número que tendrá el parte al enviarlo">Nº —</div>
       </div>
       <div class="sent" id="p-sent" role="status" hidden></div>
+      <div class="prog" id="p-prog" hidden></div>
       <div class="box foto-box" id="p-foto-box"><span class="lbl">Parte en papel</span><div class="box-b">
         <div class="foto-row">
           <input type="file" id="p-foto" class="vh" accept="image/*,application/pdf" tabindex="-1">
@@ -551,6 +569,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
   <section class="view" id="view-oficina" data-view="oficina" hidden>
     <div class="of" id="of">
       <div class="of-list-col">
+        <div class="of-mant" id="of-mant" hidden></div>
         <div class="filters" id="of-filtros"></div>
         <div class="of-list" id="of-list"></div>
       </div>
@@ -915,7 +934,7 @@ async function initDb(){
   const timer = setTimeout(() => { if (S.mode === 'connecting') setMode('slow'); }, 10000);
   const listo = () => { clearTimeout(timer); if (S.mode === 'connecting' || S.mode === 'slow') S.mode = S.canWrite === false ? 'readonly' : 'online'; };
   const fallo = err => { clearTimeout(timer); S.mode = (err && err.code === 'revoked') ? 'readonly' : 'error'; renderAll(); };
-  db.collection('partes').onSnapshot(snap => { S.partes = snap.docs.map(d => Object.assign({id: d.id}, d.data())); if (!snap.metadata.fromCache) listo(); renderAll(); }, fallo);
+  db.collection('partes').onSnapshot(snap => { const todos = snap.docs.map(d => Object.assign({id: d.id}, d.data())); S.partes = todos.filter(x => x.estado !== 'programado'); S.programados = todos.filter(x => x.estado === 'programado'); if (!snap.metadata.fromCache) listo(); renderAll(); }, fallo);
   db.collection('instalaciones').onSnapshot(snap => { S.inst = snap.docs.map(d => Object.assign({id: d.id}, d.data())); renderAll(); }, fallo);
   db.doc('config/general').onSnapshot(snap => { S.cfgDb = snap.exists ? snap.data() : null; renderAll(); }, fallo);
 }
@@ -1343,6 +1362,9 @@ function showAvisosEnvio(avisos){
   S.huellaAvisos = JSON.stringify(S.draft) + (FIRMA && FIRMA.has() ? 'F' : '');
 }
 document.addEventListener('click', e => {
+  const mc = e.target.closest && e.target.closest('.mant-crear'); if (mc) { crearProgramado(mc.dataset.inst, mc.dataset.pl, mc.dataset.f); return; }
+  const mq = e.target.closest && e.target.closest('.mant-quitar'); if (mq) { guardar(() => dbDelete('partes/' + mq.dataset.id), 'Parte programado quitado'); return; }
+  const pe = e.target.closest && e.target.closest('.prog-empezar'); if (pe) { empezarProgramado(pe.dataset.id); return; }
   const ir = e.target.closest && e.target.closest('.ir-campo'); if (ir) { irACampo(ir.dataset.sel); return; }
   if (e.target.id === 'p-enviar-igual') { S.envioConfirmado = true; enviarParte(); }
 });
@@ -1385,7 +1407,9 @@ async function enviarParte(){
     } else if (S.fotoUrl && !S.db) {
       parte.fotoLocal = S.fotoUrl; S.fotoUrl = '';
     }
-    await dbAdd('partes', parte);
+    const prog = d.programadoId ? (S.programados || []).find(x => x.id === d.programadoId) : null;
+    if (prog) { parte.planId = prog.planId || null; parte.prevista = prog.prevista || null; await dbSet('partes/' + prog.id, parte); }
+    else await dbAdd('partes', parte);
   });
   S.busy = false; $('#p-enviar').textContent = 'Enviar parte a la oficina';
   if (ok) {
@@ -2482,6 +2506,7 @@ function pintarRevision(){
   if (res) { const l = on ? listaRevision(d) : []; res.innerHTML = l.length ? `<p class="rev-tit"><b>Para revisar (${l.length})</b></p><ul>${l.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : (on ? '<p class="rev-ok">Todo lo leído cuadra.</p>' : ''); }
 }
 /* la firma se dibuja en el lienzo sin pasar por el formulario: al soltar el dedo o borrar, se revisa otra vez */
+document.addEventListener('toggle', e => { if (e.target && e.target.matches && e.target.matches('#of-mant details')) S.mantCerrado = !e.target.open; if (e.target && e.target.matches && e.target.matches('#p-prog details')) S.progCerrado = !e.target.open; }, true);
 document.addEventListener('pointerup', e => { if (e.target && e.target.id === 'p-firma') setTimeout(() => { try { pintarRevision(); } catch (_) {} }, 50); });
 document.addEventListener('click', e => { if (e.target && e.target.id === 'p-firma-borrar') setTimeout(() => { try { pintarRevision(); } catch (_) {} }, 50); });
 /* ===== De dónde sale cada dato: recorte de la foto junto al campo (opcional) ===== */
@@ -2615,6 +2640,176 @@ function renderEquiposParte(){
   const sel = new Set(d.equipos || []);
   box.hidden = false;
   box.innerHTML = `<p class="hint">¿Sobre qué equipos se ha trabajado? (opcional)</p><div class="eq-chks">${eqs.map(e => `<label class="eq-chk"><input type="checkbox" class="p-eq-chk" data-id="${esc(e.id)}"${sel.has(e.id) ? ' checked' : ''}> <span>${esc(nombreEquipo(e))}${e.serie ? ` <small class="mono">Nº ${esc(e.serie)}</small>` : ''}</span></label>`).join('')}</div>`;
+}
+
+/* ===== Mantenimientos periódicos (por instalación o por equipo) ===== */
+const FRECUENCIAS = {mensual: ['Mensual', 1], trimestral: ['Trimestral', 3], semestral: ['Semestral', 6], anual: ['Anual', 12], meses: ['Meses concretos', 0]};
+const NOMBRE_MES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+const dos = n => String(n).padStart(2, '0');
+function sumarDias(iso, n){ const t = new Date(iso + 'T12:00:00Z'); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); }
+function sumarMeses(iso, n){
+  const [y, m, d] = iso.split('-').map(Number);
+  const t = new Date(Date.UTC(y, m - 1 + n, 1));
+  const ult = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 0)).getUTCDate();
+  return t.getUTCFullYear() + '-' + dos(t.getUTCMonth() + 1) + '-' + dos(Math.min(d, ult));
+}
+/* fechas previstas del plan desde su fecha de inicio hasta «hasta» */
+function ocurrencias(plan, hasta){
+  const out = [];
+  if (!isISO(plan.desde)) return out;
+  if (plan.frecuencia === 'meses') {
+    const ms = (plan.meses || []).map(Number).filter(m => m >= 1 && m <= 12).sort((a, b) => a - b);
+    const [y0, , d0] = plan.desde.split('-').map(Number);
+    for (let y = y0; y <= Number(hasta.slice(0, 4)); y++) for (const m of ms) {
+      const f = y + '-' + dos(m) + '-' + dos(Math.min(d0, new Date(Date.UTC(y, m, 0)).getUTCDate()));
+      if (f >= plan.desde && f <= hasta) out.push(f);
+    }
+    return out;
+  }
+  const n = (FRECUENCIAS[plan.frecuencia] || [])[1]; if (!n) return out;
+  for (let k = 0; k < 600; k++) { const f = sumarMeses(plan.desde, k * n); if (f > hasta) break; out.push(f); }
+  return out;
+}
+function planesDe(i){ return Array.isArray(i && i.planes) ? i.planes : []; }
+function partesDelPlan(inst, plan){
+  return S.partes.filter(x => x.instalacionId === inst.id && x.tipoTrabajo && x.tipoTrabajo.id === plan.tipoId && (!plan.equipoId || (Array.isArray(x.equipos) && x.equipos.some(e => e.id === plan.equipoId))));
+}
+/* estado: atrasada (pasó el margen sin hacerla), toca (estamos dentro del margen), este_mes, al_dia */
+function estadoPlan(inst, plan){
+  const hoy = todayISO(), antes = Number(plan.margenAntes) || 0, despues = Number(plan.margenDespues) || 0;
+  const occs = ocurrencias(plan, sumarDias(hoy, 400));
+  const hechos = partesDelPlan(inst, plan).map(x => x.fecha).filter(isISO).sort();
+  /* una revisión cuenta como hecha con un parte desde el margen anterior hasta que empieza la siguiente (aunque se haga con retraso) */
+  const hecha = f => { const k = occs.indexOf(f); const fin = k >= 0 && k + 1 < occs.length ? sumarDias(occs[k + 1], -antes - 1) : '9999-12-31'; return hechos.some(x => x >= sumarDias(f, -antes) && x <= fin); };
+  const pend = occs.filter(f => f <= hoy || sumarDias(f, -antes) <= hoy || f.slice(0, 7) === hoy.slice(0, 7)).filter(f => !hecha(f));
+  const atr = pend.filter(f => sumarDias(f, despues) < hoy && f >= sumarDias(hoy, -366));
+  const ahora = pend.filter(f => sumarDias(f, -antes) <= hoy && sumarDias(f, despues) >= hoy);
+  const mes = pend.filter(f => f.slice(0, 7) === hoy.slice(0, 7));
+  let estado = 'al_dia', fecha = null;
+  if (atr.length) { estado = 'atrasada'; fecha = atr[0]; } else if (ahora.length) { estado = 'toca'; fecha = ahora[0]; } else if (mes.length) { estado = 'este_mes'; fecha = mes[0]; }
+  const proxima = occs.find(f => f > hoy && !hecha(f)) || null;
+  const prog = fecha ? (S.programados || []).find(x => x.planId === plan.id && x.instalacionId === inst.id && x.prevista === fecha) : null;
+  return {estado, fecha, proxima, ultima: hechos[hechos.length - 1] || '', programado: prog || null};
+}
+const ESTADO_PLAN = {atrasada: ['Atrasada', 'pl-atr'], toca: ['Toca ahora', 'pl-toca'], este_mes: ['Este mes', 'pl-mes'], al_dia: ['Al día', 'pl-ok']};
+function frecuenciaTxt(plan){
+  if (plan.frecuencia === 'meses') return 'En ' + (plan.meses || []).map(m => NOMBRE_MES[m - 1]).filter(Boolean).join(', ');
+  return (FRECUENCIAS[plan.frecuencia] || ['?'])[0];
+}
+function nombreTipo(id, guardado){ const t = tiposTrabajo().find(x => x.id === id); return t ? t.nombre : (guardado || 'Tipo de trabajo'); }
+function planFormHTML(i, ed){
+  const d = ed.data, eqs = equiposDe(i), tipos = tiposTrabajo();
+  return `<div class="pl-form" role="group" aria-label="${d.id ? 'Editar mantenimiento' : 'Nuevo mantenimiento'}">
+    <div class="grid2">
+      <div class="field"><label for="pl-tipoId">Tipo de trabajo</label><select id="pl-tipoId" class="pl-in" data-k="tipoId"><option value="">Elige…</option>${tipos.map(t => `<option value="${esc(t.id)}"${d.tipoId === t.id ? ' selected' : ''}>${esc(t.nombre)}</option>`).join('')}</select></div>
+      <div class="field"><label for="pl-equipoId">Sobre</label><select id="pl-equipoId" class="pl-in" data-k="equipoId"><option value="">Toda la instalación</option>${eqs.map(e => `<option value="${esc(e.id)}"${d.equipoId === e.id ? ' selected' : ''}>${esc(nombreEquipo(e))}</option>`).join('')}</select></div>
+      <div class="field"><label for="pl-frecuencia">Cada cuánto</label><select id="pl-frecuencia" class="pl-in" data-k="frecuencia">${Object.keys(FRECUENCIAS).map(k => `<option value="${k}"${d.frecuencia === k ? ' selected' : ''}>${FRECUENCIAS[k][0]}</option>`).join('')}</select></div>
+      <div class="field"><label for="pl-desde">${d.frecuencia === 'meses' ? 'Desde (el día del mes se usa en cada mes)' : 'Primera fecha prevista'}</label><input type="date" id="pl-desde" class="pl-in" data-k="desde" value="${esc(d.desde || '')}"></div>
+      <div class="field"><label for="pl-margenAntes">Margen antes (días)</label><input id="pl-margenAntes" class="pl-in num" data-k="margenAntes" inputmode="numeric" value="${esc(String(d.margenAntes ?? ''))}"></div>
+      <div class="field"><label for="pl-margenDespues">Margen después (días)</label><input id="pl-margenDespues" class="pl-in num" data-k="margenDespues" inputmode="numeric" value="${esc(String(d.margenDespues ?? ''))}"></div>
+    </div>
+    ${d.frecuencia === 'meses' ? `<div class="pl-meses" role="group" aria-label="Meses">${NOMBRE_MES.map((n, k) => `<label><input type="checkbox" class="pl-mes" data-m="${k + 1}"${(d.meses || []).includes(k + 1) ? ' checked' : ''}> ${n.slice(0, 3)}</label>`).join('')}</div>` : ''}
+    <div class="field"><label for="pl-nota">Nota para el técnico (opcional)</label><input id="pl-nota" class="pl-in" data-k="nota" value="${esc(d.nota || '')}" placeholder="Ej.: pedir la llave al conserje"></div>
+    <div class="btn-row"><button type="button" class="btn-primary sm" id="pl-save">Guardar mantenimiento</button><button type="button" class="btn sm" id="pl-cancel">Cancelar</button></div>
+  </div>`;
+}
+function planesCardHTML(i){
+  const pls = planesDe(i), ed = S.planEdit && S.planEdit.instId === i.id ? S.planEdit : null, of = puedeEditarReglas() && puedeEscribir();
+  if (!pls.length && !of) return '';
+  const eqs = equiposDe(i);
+  return `<div class="eq-box pl-box"><div class="eq-head"><b>Mantenimientos</b><span class="muted">${pls.length}</span>${of && !ed ? `<button type="button" class="btn sm pl-add" data-inst="${esc(i.id)}">Añadir mantenimiento</button>` : ''}</div>
+    ${pls.length ? `<ul class="eq-list">${pls.map(pl => {
+      if (ed && ed.data.id === pl.id) return `<li class="eq">${planFormHTML(i, ed)}</li>`;
+      const est = estadoPlan(i, pl), [et, ec] = ESTADO_PLAN[est.estado], eq = pl.equipoId ? eqs.find(e => e.id === pl.equipoId) : null, k = i.id + '/' + pl.id;
+      return `<li class="eq">
+        <div class="eq-l1"><span class="chip ${ec}">${et}</span><b>${esc(nombreTipo(pl.tipoId, pl.tipoNombre))}</b><span class="muted">${pl.equipoId ? esc(eq ? nombreEquipo(eq) : 'equipo quitado') : 'toda la instalación'}</span></div>
+        <div class="eq-l2">${esc(frecuenciaTxt(pl))} · margen ${Number(pl.margenAntes) || 0} días antes y ${Number(pl.margenDespues) || 0} después</div>
+        <div class="eq-l2 muted">${est.fecha ? `Prevista: <b>${esc(fmtFecha(est.fecha))}</b> · ` : ''}${est.proxima ? `Siguiente: ${esc(fmtFecha(est.proxima))}` : ''}${est.ultima ? ` · Última hecha: ${esc(fmtFecha(est.ultima))}` : ' · Aún no hay partes de este mantenimiento'}</div>
+        ${pl.nota ? `<div class="eq-l2">${esc(pl.nota)}</div>` : ''}
+        ${of && !ed ? `<div class="eq-acc">${S.plDel === k ? `<span class="danger-q">¿Quitar el mantenimiento?</span><button type="button" class="btn-danger sm pl-del-ok" data-inst="${esc(i.id)}" data-pl="${esc(pl.id)}">Sí, quitar</button>` : `<button type="button" class="btn-link pl-edit" data-inst="${esc(i.id)}" data-pl="${esc(pl.id)}">Editar</button><button type="button" class="btn-link pl-del" data-k="${esc(k)}">Quitar</button>`}</div>` : ''}
+      </li>`;
+    }).join('')}</ul>` : (ed ? '' : '<p class="muted eq-vacio">Sin mantenimientos programados.</p>')}
+    ${ed && !ed.data.id ? planFormHTML(i, ed) : ''}</div>`;
+}
+function abrirPlan(instId, plId){
+  const i = S.inst.find(x => x.id === instId); if (!i) return;
+  const pl = plId ? planesDe(i).find(x => x.id === plId) : null;
+  S.planEdit = {instId, data: pl ? clone(pl) : {id: '', tipoId: (tiposTrabajo()[0] || {}).id || '', equipoId: '', frecuencia: 'anual', meses: [], desde: todayISO(), margenAntes: 7, margenDespues: 7, nota: ''}};
+  S.plDel = null; S._instSig = null; renderInstalaciones(true);
+  const f = $('#pl-tipoId'); if (f) f.closest('.pl-form').scrollIntoView({block: 'center', behavior: 'smooth'});
+}
+async function guardarPlan(){
+  const ed = S.planEdit; if (!ed) return;
+  const i = S.inst.find(x => x.id === ed.instId); if (!i) return;
+  const d = ed.data;
+  if (!d.tipoId) { toast('Elige el tipo de trabajo.', true); return; }
+  if (!isISO(d.desde)) { toast('Pon la primera fecha prevista.', true); return; }
+  if (d.frecuencia === 'meses' && !(d.meses || []).length) { toast('Marca al menos un mes.', true); return; }
+  const n = v => { const x = parseInt(v, 10); return Number.isFinite(x) && x >= 0 ? Math.min(x, 120) : 0; };
+  const limpio = {id: d.id || 'pl-' + Date.now().toString(36), tipoId: d.tipoId, tipoNombre: nombreTipo(d.tipoId), equipoId: d.equipoId || '', frecuencia: d.frecuencia, meses: d.frecuencia === 'meses' ? (d.meses || []).slice().sort((a, b) => a - b) : [], desde: d.desde, margenAntes: n(d.margenAntes), margenDespues: n(d.margenDespues), nota: String(d.nota || '').trim()};
+  const lista = planesDe(i).slice(); const k = lista.findIndex(x => x.id === limpio.id);
+  if (k >= 0) lista[k] = limpio; else lista.push(limpio);
+  const ok = await guardar(() => dbUpdate('instalaciones/' + i.id, {planes: lista}), 'Mantenimiento guardado');
+  if (ok) { S.planEdit = null; S._instSig = null; renderInstalaciones(true); renderMant(); }
+}
+async function quitarPlan(instId, plId){
+  const i = S.inst.find(x => x.id === instId); if (!i) return;
+  const ok = await guardar(() => dbUpdate('instalaciones/' + i.id, {planes: planesDe(i).filter(x => x.id !== plId)}), 'Mantenimiento quitado');
+  if (ok) { S.plDel = null; S._instSig = null; renderInstalaciones(true); renderMant(); }
+}
+/* Oficina: revisiones que tocan este mes */
+function revisionesPendientes(){
+  const out = [];
+  S.inst.forEach(i => planesDe(i).forEach(pl => { const est = estadoPlan(i, pl); if (est.estado !== 'al_dia') out.push({i, pl, est}); }));
+  const peso = {atrasada: 0, toca: 1, este_mes: 2};
+  return out.sort((a, b) => peso[a.est.estado] - peso[b.est.estado] || String(a.est.fecha).localeCompare(String(b.est.fecha)));
+}
+function renderMant(){
+  const box = $('#of-mant'); if (!box) return;
+  const lista = revisionesPendientes(), of = puedeEditarReglas() && puedeEscribir();
+  if (!lista.length) { box.innerHTML = ''; box.hidden = true; return; }
+  box.hidden = false;
+  box.innerHTML = `<details class="mant"${S.mantCerrado ? '' : ' open'}><summary><b>Revisiones que tocan este mes</b> <span class="count">${lista.length}</span></summary><ul>${lista.map(({i, pl, est}) => {
+    const [et, ec] = ESTADO_PLAN[est.estado], eq = pl.equipoId ? equiposDe(i).find(e => e.id === pl.equipoId) : null;
+    return `<li><div class="mant-l1"><span class="chip ${ec}">${et}</span><b>${esc(i.nombre)}</b></div>
+      <div class="mant-l2">${esc(nombreTipo(pl.tipoId, pl.tipoNombre))}${eq ? ' · ' + esc(nombreEquipo(eq)) : ''} · prevista ${esc(fmtFecha(est.fecha))}</div>
+      <div class="mant-acc">${est.programado ? `<span class="chip pl-prog">Parte programado: les sale a los técnicos</span>${of ? `<button type="button" class="btn-link mant-quitar" data-id="${esc(est.programado.id)}">Quitar</button>` : ''}` : (of ? `<button type="button" class="btn sm mant-crear" data-inst="${esc(i.id)}" data-pl="${esc(pl.id)}" data-f="${esc(est.fecha)}">Crear parte</button>` : '')}</div></li>`;
+  }).join('')}</ul></details>`;
+}
+async function crearProgramado(instId, plId, fecha){
+  const i = S.inst.find(x => x.id === instId); if (!i) return;
+  const pl = planesDe(i).find(x => x.id === plId); if (!pl) return;
+  const tipo = tiposTrabajo().find(t => t.id === pl.tipoId), eq = pl.equipoId ? equiposDe(i).find(e => e.id === pl.equipoId) : null;
+  const doc = {estado: 'programado', prevista: fecha, planId: pl.id, instalacionId: i.id, instalacion: snapInst(i), ct: !!i.ct,
+    tipoTrabajo: {id: pl.tipoId, nombre: tipo ? tipo.nombre : (pl.tipoNombre || '')},
+    tareas: tipo ? tipo.tareas.map(k => ({texto: k.texto, obligatoria: !!k.obligatoria, hecha: false})) : [],
+    equipos: eq ? [{id: eq.id, tipo: eq.tipo || '', nombre: eq.nombre || '', serie: eq.serie || ''}] : [],
+    nota: pl.nota || '', creadoEn: new Date().toISOString(), creadoPor: S.myId || null};
+  await guardar(() => dbAdd('partes', doc), 'Parte programado: les sale a los técnicos en «Nuevo parte»');
+}
+/* Técnico: partes programados por la oficina */
+function draftConContenido(d){ return !!(String(d.descripcion || '').trim() || d.deFoto || (d.materiales || []).length || (d.tecnicos || []).some(t => String(t.nombre || '').trim() || t.inicio || t.fin)); }
+function renderProgramados(){
+  const box = $('#p-prog'); if (!box) return;
+  const d = S.draft, lista = (S.programados || []).slice().sort((a, b) => String(a.prevista).localeCompare(String(b.prevista)));
+  const actual = d.programadoId ? lista.find(x => x.id === d.programadoId) : null;
+  if (!lista.length) { box.innerHTML = ''; box.hidden = true; return; }
+  box.hidden = false;
+  box.innerHTML = `<details class="mant"${S.progCerrado ? '' : ' open'}><summary><b>Revisiones programadas</b> <span class="count">${lista.length}</span></summary><ul>${lista.map(x => {
+    const i = S.inst.find(z => z.id === x.instalacionId), es = actual && actual.id === x.id;
+    return `<li${es ? ' class="activo"' : ''}><div class="mant-l1"><span class="chip ${x.prevista < todayISO() ? 'pl-atr' : 'pl-mes'}">Prevista ${esc(fmtFecha(x.prevista))}</span><b>${esc(i ? i.nombre : (x.instalacion && x.instalacion.nombre) || '')}</b></div>
+      <div class="mant-l2">${esc(x.tipoTrabajo ? x.tipoTrabajo.nombre : '')}${(x.equipos || []).length ? ' · ' + esc(x.equipos.map(nombreEquipo).join(', ')) : ''}${x.nota ? ' · ' + esc(x.nota) : ''}</div>
+      <div class="mant-acc">${es ? '<span class="chip pl-ok">Lo estás rellenando</span>' : `<button type="button" class="btn sm prog-empezar" data-id="${esc(x.id)}">${S.progConfirmar === x.id ? 'Sí, sustituir el parte a medias' : 'Empezar este parte'}</button>`}</div></li>`;
+  }).join('')}</ul></details>`;
+}
+function empezarProgramado(id){
+  const x = (S.programados || []).find(z => z.id === id); if (!x) return;
+  if (draftConContenido(S.draft) && S.progConfirmar !== id) { S.progConfirmar = id; renderProgramados(); toast('Tienes un parte a medias: vuelve a pulsar para sustituirlo.'); return; }
+  S.progConfirmar = null;
+  const d = nuevoDraft();
+  Object.assign(d, {instalacionId: x.instalacionId, ct: x.ct, tipoTrabajo: x.tipoTrabajo || null, tareas: (x.tareas || []).map(k => ({texto: k.texto, obligatoria: !!k.obligatoria, hecha: false})), equipos: (x.equipos || []).map(e => e.id), programadoId: x.id});
+  S.draft = d; FIRMA && FIRMA.clear(); limpiarFoto(); saveDraft(); hideSent(); renderParteForm(); renderParteDyn(); renderProgramados();
+  toast('Parte preparado: revisa las tareas y rellena las horas.');
 }
 
 /* ===== Tipo de trabajo y lista de tareas ===== */
@@ -2938,7 +3133,7 @@ function bindOficina(){
 /* ===== Vista: Instalaciones ===== */
 function renderInstalaciones(forzar){
   const a = document.activeElement;
-  if (!forzar && a && a.closest && a.closest('.eq-form')) { S._instPend = true; return; }
+  if (!forzar && a && a.closest && a.closest('.eq-form,.pl-form')) { S._instPend = true; return; }
   S._instPend = false;
   const c = cfg(); const list = S.inst.slice().sort(byNombre);
   const groups = groupBy(list, i => i.clienteNombre || 'Sin cliente asignado');
@@ -2955,6 +3150,7 @@ function renderInstalaciones(forzar){
         ${i.notas ? `<div><dt>Notas</dt><dd>${esc(i.notas)}</dd></div>` : ''}
       </dl>
       ${equiposCardHTML(i)}
+      ${planesCardHTML(i)}
       ${S.mapaCard === i.id ? '<div class="mapa-box"><div class="mapa" id="i-card-mapa"></div><p class="mapa-msg" id="i-card-msg"></p></div>' : ''}
       <div class="i-foot">${tieneSitio(i) ? enlacesMapa(i.ubicacion, c.base, i.lat, i.lng, `<button type="button" class="btn sm i-mapa" data-id="${esc(i.id)}">${S.mapaCard === i.id ? 'Ocultar el mapa' : 'Ver en el mapa'}</button>`) : '<span class="muted">Sin dirección para el mapa</span>'}<span class="muted">${n} parte${n === 1 ? '' : 's'}</span>${ro ? '' : `<button type="button" class="btn sm i-edit" data-id="${esc(i.id)}">Editar</button>`}</div>
     </article>`;
@@ -3005,6 +3201,7 @@ async function guardarInst(){
   const sit = Number.isFinite(f.lat) && Number.isFinite(f.lng);
   const data = {nombre: String(f.nombre).trim(), clienteCodigo: String(f.clienteCodigo).trim(), clienteNombre: String(f.clienteNombre).trim(), ct: !!f.ct, ubicacion: String(f.ubicacion).trim(), kmIda: km, notas: String(f.notas).trim(), lat: sit ? f.lat : null, lng: sit ? f.lng : null, precision: sit ? (f.precision || 'manual') : ''};
   data.equipos = f.id ? equiposDe(S.inst.find(x => x.id === f.id)) : [];
+  data.planes = f.id ? planesDe(S.inst.find(x => x.id === f.id)) : [];
   const ok = await guardar(() => f.id ? dbSet('instalaciones/' + f.id, data) : dbAdd('instalaciones', data), 'Instalación guardada');
   if (ok) { S.instEdit = null; renderInstForm(); }
 }
@@ -3021,6 +3218,12 @@ function bindInstalaciones(){
       S.instEdit = {id: i.id, nombre: i.nombre || '', clienteCodigo: i.clienteCodigo || '', clienteNombre: i.clienteNombre || '', ct: !!i.ct, ubicacion: i.ubicacion || '', kmIda: i.kmIda == null ? '' : i.kmIda, notas: i.notas || '', lat: Number.isFinite(i.lat) ? i.lat : null, lng: Number.isFinite(i.lng) ? i.lng : null, precision: i.precision || '', posTexto: ''};
       S.confirmInstDel = false; renderInstForm(); $('#i-form-wrap').scrollIntoView({block: 'start', behavior: 'smooth'});
     }
+    else if (b.classList.contains('pl-add')) abrirPlan(b.dataset.inst, null);
+    else if (b.classList.contains('pl-edit')) abrirPlan(b.dataset.inst, b.dataset.pl);
+    else if (b.id === 'pl-cancel') { S.planEdit = null; S._instSig = null; renderInstalaciones(true); }
+    else if (b.id === 'pl-save') guardarPlan();
+    else if (b.classList.contains('pl-del')) { S.plDel = b.dataset.k; S._instSig = null; renderInstalaciones(true); }
+    else if (b.classList.contains('pl-del-ok')) quitarPlan(b.dataset.inst, b.dataset.pl);
     else if (b.classList.contains('eq-add')) abrirEquipo(b.dataset.inst, null);
     else if (b.classList.contains('eq-edit')) abrirEquipo(b.dataset.inst, b.dataset.eq);
     else if (b.id === 'eq-cancel') { S.equipoEdit = null; S._instSig = null; renderInstalaciones(true); }
@@ -3035,6 +3238,7 @@ function bindInstalaciones(){
   });
   v.addEventListener('input', e => {
     if (e.target.classList.contains('eq-in') && S.equipoEdit) { S.equipoEdit.data[e.target.dataset.k] = e.target.value; return; }
+    if (e.target.classList.contains('pl-in') && S.planEdit) { S.planEdit.data[e.target.dataset.k] = e.target.value; return; }
     const f = S.instEdit; if (!f) return;
     const map = {'i-nombre': 'nombre', 'i-ccod': 'clienteCodigo', 'i-cnom': 'clienteNombre', 'i-ubic': 'ubicacion', 'i-km': 'kmIda', 'i-notas': 'notas'};
     const k = map[e.target.id]; if (!k) return;
@@ -3043,10 +3247,20 @@ function bindInstalaciones(){
   });
   v.addEventListener('change', e => {
     if (e.target.classList.contains('eq-in') && S.equipoEdit) { S.equipoEdit.data[e.target.dataset.k] = e.target.value; return; }
+    if (e.target.classList.contains('pl-in') && S.planEdit) {
+      S.planEdit.data[e.target.dataset.k] = e.target.value;
+      if (e.target.dataset.k === 'frecuencia') { S._instSig = null; renderInstalaciones(true); const f = $('#pl-frecuencia'); if (f) f.focus(); }
+      return;
+    }
+    if (e.target.classList.contains('pl-mes') && S.planEdit) {
+      const set = new Set(S.planEdit.data.meses || []), m = +e.target.dataset.m;
+      if (e.target.checked) set.add(m); else set.delete(m);
+      S.planEdit.data.meses = [...set]; return;
+    }
     if (e.target.id === 'eq-placa-file') { const f = e.target.files && e.target.files[0]; if (f) leerPlaca(f); return; }
     if (e.target.id === 'i-ct' && S.instEdit) S.instEdit.ct = e.target.checked;
   });
-  v.addEventListener('focusout', () => { if (S._instPend) setTimeout(() => { const a = document.activeElement; if (!(a && a.closest && a.closest('.eq-form'))) renderInstalaciones(); }, 0); });
+  v.addEventListener('focusout', () => { if (S._instPend) setTimeout(() => { const a = document.activeElement; if (!(a && a.closest && a.closest('.eq-form,.pl-form'))) renderInstalaciones(); }, 0); });
   v.addEventListener('submit', e => { e.preventDefault(); guardarInst(); });
 }
 
@@ -3213,7 +3427,7 @@ function bindReglas(){
 let toastT;
 function toast(msg, bad){ const t = $('#toast'); t.textContent = msg; t.classList.toggle('bad', !!bad); t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 3400); }
 function renderSync(){ const el = $('#sync'); el.dataset.m = S.mode; $('#sync-t').textContent = MODOS[S.mode] || ''; }
-function renderAll(){ renderSync(); renderParteDyn(); renderMine(); renderOfList(); renderDetalle(false); renderInstalaciones(); renderReglas(false); renderCatStatus(); }
+function renderAll(){ try { renderMant(); renderProgramados(); } catch (e) { console.error(e); } renderSync(); renderParteDyn(); renderMine(); renderOfList(); renderDetalle(false); renderInstalaciones(); renderReglas(false); renderCatStatus(); }
 function showView(v){
   if (!VIEWS.includes(v)) v = 'parte';
   const cambio = S.view !== v; S.view = v;

@@ -219,6 +219,20 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .foto-res{background:var(--pen-soft);border-radius:4px;padding:10px 12px;font-size:14px;display:flex;flex-direction:column;gap:6px}
 .foto-res ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:3px}
 .box.ia{border-color:var(--pen)}
+.box.rev-dudoso,.tec.rev-dudoso,.mat.rev-dudoso{background:var(--warn-soft)}
+.box.rev-falta,.box.rev-formato,.box.rev-no_cuadra,.tec.rev-falta,.tec.rev-formato,.tec.rev-no_cuadra,.mat.rev-falta,.mat.rev-formato,.mat.rev-no_cuadra{background:var(--bad-soft)}
+.box.rev-dudoso{border-color:var(--warn)}
+.box.rev-falta,.box.rev-formato,.box.rev-no_cuadra{border-color:var(--bad)}
+.tec[class*="rev-"],.mat[class*="rev-"]{border-radius:4px;padding-left:6px;padding-right:6px}
+.rev-msg{grid-column:1/-1;font-size:13px;line-height:1.35;margin-top:4px;display:flex;gap:6px;align-items:baseline;flex-wrap:wrap}
+.rev-chip{font-size:11px;font-weight:700;border-radius:999px;padding:1px 7px;white-space:nowrap}
+.rev-dudoso .rev-chip{background:var(--warn);color:var(--sheet)}
+.rev-falta .rev-chip,.rev-formato .rev-chip,.rev-no_cuadra .rev-chip{background:var(--bad);color:var(--sheet)}
+#p-num.rev-dudoso{color:var(--warn);text-decoration:underline wavy}
+#p-num.rev-falta,#p-num.rev-formato,#p-num.rev-no_cuadra{color:var(--bad);text-decoration:underline wavy}
+.rev-lista ul,.rev-of{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:3px}
+.rev-lista .rev-tit{margin:4px 0 2px}
+.rev-ok{color:var(--ok);font-weight:600}
 .box.ia>.lbl::after{content:"De la foto";margin-left:auto;font-family:var(--font-body);text-transform:none;letter-spacing:0;font-size:11.5px;font-weight:600;color:var(--pen);background:var(--pen-soft);border-radius:999px;padding:1px 8px}
 .opcion{text-align:left}
 .opcion .op-top{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
@@ -1076,7 +1090,7 @@ function loadDraft(){
     return Object.assign(nuevoDraft(), d);
   } catch (_) { return null; }
 }
-const saveDraft = debounce(() => { try { localStorage.setItem(DRAFT_KEY, JSON.stringify(S.draft)); } catch (_) {} }, 400);
+const saveDraft = debounce(() => { try { localStorage.setItem(DRAFT_KEY, JSON.stringify(S.draft)); } catch (_) {} try { pintarRevision(); } catch (_) {} }, 250);
 function tecCalc(t){
   if (!t.inicio || !t.fin) return '<span class="muted">Pon la hora de inicio y la de fin.</span>';
   const r = repartir(S.draft.fecha, t.inicio, t.fin, festivosSet(cfg()));
@@ -1096,6 +1110,8 @@ function renderTecs(){
     </div>`).join('');
 }
 function updateTecCalcs(){ S.draft.tecnicos.forEach((t, i) => { const el = $('#p-tec-c-' + i); if (el) el.innerHTML = tecCalc(t); }); }
+/* después de redibujar técnicos o materiales, se vuelve a pintar la revisión */
+renderTecs = (f => function(){ f(); try { pintarRevision(); } catch (_) {} })(renderTecs);
 function renderMats(){
   const d = S.draft;
   $('#p-mats').innerHTML = d.materiales.length ? d.materiales.map((m, i) => `
@@ -1116,12 +1132,13 @@ function renderMats(){
       const prev = m.codigo ? (m.elegida || {c: m.codigo, d: m.descripcion, d2: m.descripcion2 || '', p: Number(m.precio) || 0}) : null;
       const resto = [...(m.opciones || []), ...(m.otras || [])].filter(x => x.c !== o.c);
       if (prev && prev.c !== o.c) resto.unshift(prev);
-      Object.assign(m, {codigo: o.c, descripcion: o.d, descripcion2: o.d2, precio: o.p, otras: resto, elegida: o});
+      Object.assign(m, {codigo: o.c, descripcion: o.d, descripcion2: o.d2, precio: o.p, otras: resto, elegida: o}); delete m.dudaIA;
       delete m.opciones; delete m._ed; delete m._q; renderMats(); saveDraft();
     }});
     if (m._foco) { delete m._foco; inp.focus(); inp.select(); inp.dispatchEvent(new Event('input')); }
   });
 }
+renderMats = (f => function(){ f(); try { pintarRevision(); } catch (_) {} })(renderMats);
 /* Texto de partida para «Buscar similar»: las primeras palabras de la descripción (sin medidas raras) */
 function similarDe(m){ return String(m.escrito || m.descripcion || '').replace(/[«»"]/g, '').split(/\s+/).slice(0, 3).join(' '); }
 function syncTension(){ const d = S.draft; $('#p-ct-mt').checked = d.ct === true; $('#p-ct-bt').checked = d.ct === false; }
@@ -1159,7 +1176,7 @@ function renderParteForm(){
   $('#p-n-nombre').value = n.nombre || ''; $('#p-n-cliente').value = n.cliente || ''; $('#p-n-ubic').value = n.ubicacion || ''; $('#p-n-ct').checked = !!n.ct;
   $('#p-coches').textContent = d.coches;
   S.mapaParte = false;
-  renderInstSelect(); renderInstInfo(); syncTension(); renderTecs(); renderMats(); renderNuevaMapa(); renderFotoRes(); marcarIA(); montarMapaParte();
+  renderInstSelect(); renderInstInfo(); syncTension(); renderTecs(); renderMats(); renderNuevaMapa(); renderFotoRes(); marcarIA(); montarMapaParte(); pintarRevision();
 }
 function renderParteDyn(){
   renderInstSelect(); renderInstInfo(); renderDatalist();
@@ -1218,7 +1235,8 @@ async function enviarParte(){
       coches: Number(d.coches) || 0,
       firma: FIRMA && FIRMA.has() ? FIRMA.toDataURL() : null,
       estado: 'pendiente', pedido: null, creadoEn: new Date().toISOString(), creadoPor: S.myId || null,
-      numeroPapel: String(d.numeroPapel || ''), deFoto: !!d.deFoto, notasFoto: String(d.notasFoto || ''), foto: null
+      numeroPapel: String(d.numeroPapel || ''), deFoto: !!d.deFoto, notasFoto: String(d.notasFoto || ''), foto: null,
+      revisionFoto: listaRevision(d).slice(0, 30)
     };
     if (S.fotoBlob && S.db && S.assets) {
       try { parte.foto = (await S.assets.upload(S.fotoBlob, {type: 'image/jpeg'})).id; }
@@ -1240,27 +1258,28 @@ function bindParte(){
   const f = $('#f-parte');
   f.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.tagName === 'INPUT') e.preventDefault(); });
   f.addEventListener('submit', e => { e.preventDefault(); enviarParte(); });
-  const tec = t => { const row = t.closest('.tec'); if (!row) return; const i = +row.dataset.i; const k = t.classList.contains('tec-n') ? 'nombre' : t.classList.contains('tec-i') ? 'inicio' : 'fin'; S.draft.tecnicos[i][k] = t.value; const c = $('#p-tec-c-' + i); if (c) c.innerHTML = tecCalc(S.draft.tecnicos[i]); };
+  const tec = t => { const row = t.closest('.tec'); if (!row) return; const i = +row.dataset.i; const k = t.classList.contains('tec-n') ? 'nombre' : t.classList.contains('tec-i') ? 'inicio' : 'fin'; S.draft.tecnicos[i][k] = t.value; delete S.draft.tecnicos[i].dudaIA; const c = $('#p-tec-c-' + i); if (c) c.innerHTML = tecCalc(S.draft.tecnicos[i]); };
   const nueva = () => (S.draft.nuevaInst = S.draft.nuevaInst || {nombre: '', cliente: '', ubicacion: '', ct: false});
   f.addEventListener('input', e => {
     const t = e.target, d = S.draft;
     if (t.id === 'p-mat-q') return;
     hideSent();
-    if (t.id === 'p-fecha') { d.fecha = t.value; updateTecCalcs(); }
-    else if (t.id === 'p-desc') d.descripcion = t.value;
+    const ia = d.dudaIA || (d.dudaIA = {});
+    if (t.id === 'p-fecha') { d.fecha = t.value; ia.fecha = false; updateTecCalcs(); }
+    else if (t.id === 'p-desc') { d.descripcion = t.value; ia.desc = false; }
     else if (t.id === 'p-n-nombre') nueva().nombre = t.value;
     else if (t.id === 'p-n-cliente') nueva().cliente = t.value;
     else if (t.id === 'p-n-ubic') { const n = nueva(); n.ubicacion = t.value; if (n.precision !== 'manual') { n.lat = null; n.lng = null; } renderNuevaMapa(); if (S.mapaParte) buscarDireccionParte(); }
     else if (t.id === 'p-foto') return;
     else if (t.matches('.tec-n,.tec-i,.tec-f')) tec(t);
-    else if (t.classList.contains('mat-c')) { const v = parseNum(t.value); const i = +t.closest('.mat').dataset.i; t.classList.toggle('invalid', isNaN(v) || v <= 0); if (!isNaN(v)) d.materiales[i].cantidad = v; }
+    else if (t.classList.contains('mat-c')) { const v = parseNum(t.value); const i = +t.closest('.mat').dataset.i; t.classList.toggle('invalid', isNaN(v) || v <= 0); if (!isNaN(v)) d.materiales[i].cantidad = v; delete d.materiales[i].dudaIA; }
     saveDraft();
   });
   f.addEventListener('change', e => {
     const t = e.target, d = S.draft;
     if (t.id === 'p-foto') { const file = t.files && t.files[0]; t.value = ''; if (file) leerFoto(file); return; }
     if (t.id === 'p-inst') {
-      d.instalacionId = t.value;
+      d.instalacionId = t.value; if (d.dudaIA) d.dudaIA.inst = false;
       if (t.value === '__new') d.ct = !!nueva().ct;
       else { const i = S.inst.find(x => x.id === t.value); if (i) d.ct = !!i.ct; }
       renderInstInfo(); syncTension(); montarMapaParte();
@@ -1279,13 +1298,13 @@ function bindParte(){
     if (b.id === 'p-add-tec') { const last = d.tecnicos[d.tecnicos.length - 1] || {}; d.tecnicos.push({nombre: '', inicio: last.inicio || '', fin: last.fin || ''}); renderTecs(); const n = $('#p-tec-n-' + (d.tecnicos.length - 1)); if (n) n.focus(); }
     else if (b.classList.contains('tec-x')) { d.tecnicos.splice(+b.closest('.tec').dataset.i, 1); if (!d.tecnicos.length) d.tecnicos.push({nombre: '', inicio: '', fin: ''}); renderTecs(); }
     else if (b.classList.contains('mat-mas') || b.classList.contains('mat-menos')) { const m = d.materiales[+b.closest('.mat').dataset.i]; m.cantidad = Math.max(1, round2((Number(m.cantidad) || 0) + (b.classList.contains('mat-mas') ? 1 : -1))); renderMats(); }
-    else if (b.classList.contains('mat-opt')) { const m = d.materiales[+b.closest('.mat').dataset.i]; const o = m.opciones[+b.dataset.k]; Object.assign(m, {codigo: o.c, descripcion: o.d, descripcion2: o.d2, precio: o.p, otras: m.opciones.filter(x => x !== o), elegida: o}); delete m.opciones; delete m._ed; delete m._q; renderMats(); }
-    else if (b.classList.contains('mat-otra')) { const m = d.materiales[+b.closest('.mat').dataset.i]; const k = +b.dataset.k, o = m.otras[k]; m.otras.splice(k, 1, m.elegida || {c: m.codigo, d: m.descripcion, d2: m.descripcion2 || '', p: Number(m.precio) || 0}); m.elegida = o; Object.assign(m, {codigo: o.c, descripcion: o.d, descripcion2: o.d2, precio: o.p}); delete m._ed; delete m._q; renderMats(); }
+    else if (b.classList.contains('mat-opt')) { const m = d.materiales[+b.closest('.mat').dataset.i]; delete m.dudaIA; const o = m.opciones[+b.dataset.k]; Object.assign(m, {codigo: o.c, descripcion: o.d, descripcion2: o.d2, precio: o.p, otras: m.opciones.filter(x => x !== o), elegida: o}); delete m.opciones; delete m._ed; delete m._q; renderMats(); }
+    else if (b.classList.contains('mat-otra')) { const m = d.materiales[+b.closest('.mat').dataset.i]; delete m.dudaIA; const k = +b.dataset.k, o = m.otras[k]; m.otras.splice(k, 1, m.elegida || {c: m.codigo, d: m.descripcion, d2: m.descripcion2 || '', p: Number(m.precio) || 0}); m.elegida = o; Object.assign(m, {codigo: o.c, descripcion: o.d, descripcion2: o.d2, precio: o.p}); delete m._ed; delete m._q; renderMats(); }
     else if (b.classList.contains('mat-edit')) { const m = d.materiales[+b.closest('.mat').dataset.i]; m._ed = true; renderMats(); return; }
     else if (b.classList.contains('mat-buscar')) { const m = d.materiales[+b.closest('.mat').dataset.i]; m._ed = true; m._foco = true; renderMats(); return; }
     else if (b.classList.contains('mat-cerrar')) { const m = d.materiales[+b.closest('.mat').dataset.i]; delete m._ed; delete m._q; renderMats(); return; }
     else if (b.classList.contains('mat-x')) { d.materiales.splice(+b.closest('.mat').dataset.i, 1); renderMats(); }
-    else if (b.id === 'p-coche-mas' || b.id === 'p-coche-menos') { d.coches = Math.min(9, Math.max(0, (Number(d.coches) || 0) + (b.id === 'p-coche-mas' ? 1 : -1))); $('#p-coches').textContent = d.coches; }
+    else if (b.id === 'p-coche-mas' || b.id === 'p-coche-menos') { d.coches = Math.min(9, Math.max(0, (Number(d.coches) || 0) + (b.id === 'p-coche-mas' ? 1 : -1))); $('#p-coches').textContent = d.coches; if (d.dudaIA) d.dudaIA.coches = false; }
     else if (b.id === 'p-firma-borrar') { if (FIRMA) FIRMA.clear(); return; }
     else if (b.id === 'p-foto-btn') { const inp = $('#p-foto'); inp.value = ''; inp.click(); return; }
     else if (b.id === 'p-foto-stop') { if (S.leyendo) S.leyendo.abort(); return; }
@@ -1900,7 +1919,8 @@ ${JSON.stringify(insts)}
 Técnicos conocidos (JSON): ${JSON.stringify(nombresTecnicos())}
 
 Responde solo con un objeto JSON con esta forma:
-{"numero_parte": "número impreso o null", "fecha": "AAAA-MM-DD o null", "cliente": "texto o null", "direccion": "texto o null", "poblacion": "texto o null", "localizacion": "texto o null", "instalacion_id": "id de la lista o null", "es_ct": true, "descripcion": "texto", "tecnicos": [{"nombre": "Nombre Apellido", "inicio": "HH:MM", "fin": "HH:MM"}], "materiales": [{"cantidad": 1, "texto": "tal como está escrito", "busquedas": ["FUSIBLE IBD1 25A"]}], "coches": 1, "anotaciones": "texto o null", "dudas": ["texto"]}
+{"numero_parte": "número impreso o null", "fecha": "AAAA-MM-DD o null", "cliente": "texto o null", "direccion": "texto o null", "poblacion": "texto o null", "localizacion": "texto o null", "instalacion_id": "id de la lista o null", "es_ct": true, "descripcion": "texto", "tecnicos": [{"nombre": "Nombre Apellido", "inicio": "HH:MM", "fin": "HH:MM"}], "materiales": [{"cantidad": 1, "texto": "tal como está escrito", "busquedas": ["FUSIBLE IBD1 25A"]}], "coches": 1, "firma_cliente": true, "anotaciones": "texto o null", "dudas": ["texto"], "seguros": {"numero_parte": true, "fecha": true, "instalacion": true, "descripcion": true, "coches": true}}
+(cada técnico y cada material llevan también "seguro": true o false)
 
 Reglas:
 - Las fechas están en formato español día-mes-año: «6-8-26» es el 6 de agosto de 2026, "2026-08-06".
@@ -1912,7 +1932,9 @@ Reglas:
 - "es_ct": true si el trabajo es en un centro de transformación (C.T., CT, celdas o transformador de media tensión), false si es en baja tensión, null si no se sabe.
 - "coches": null si el parte no dice nada del desplazamiento.
 - Transcribe la descripción en minúsculas con mayúscula al empezar cada frase, sin añadir nada.
-- Si un campo está vacío o no se lee, pon null. No inventes datos.`;
+- Si un campo está vacío o no se lee, pon null. No inventes datos.
+- "seguro" (en cada técnico y cada material) y "seguros" (resto de datos): false si la letra no se lee bien, está tachada o has tenido que suponer algo; true si se lee claro. Sé exigente: ante la duda, false.
+- "firma_cliente": true si en el recuadro de firma del cliente hay una firma, false si está vacío, null si no se ve ese recuadro.`;
 }
 function promptMateriales(lineas){
   return `Un técnico ha escrito estas líneas de material en un parte. Para cada línea, elige entre sus candidatos el artículo del catálogo de Sage que corresponde.
@@ -1946,8 +1968,10 @@ function normalizarLectura(r){
     instalacionId: s(r.instalacion_id),
     esCt: r.es_ct === true ? true : (r.es_ct === false ? false : null),
     descripcion: s(r.descripcion),
-    tecnicos: (Array.isArray(r.tecnicos) ? r.tecnicos : []).map(t => ({nombre: s(t && t.nombre), inicio: hm(t && t.inicio), fin: hm(t && t.fin)})).filter(t => t.nombre || t.inicio || t.fin).slice(0, 8),
-    materiales: (Array.isArray(r.materiales) ? r.materiales : []).map(m => ({cantidad: parseNum(m && m.cantidad), texto: s(m && m.texto), busquedas: Array.isArray(m && m.busquedas) ? m.busquedas.map(s).filter(Boolean).slice(0, 3) : []})).filter(m => m.texto).slice(0, 20),
+    tecnicos: (Array.isArray(r.tecnicos) ? r.tecnicos : []).map(t => ({nombre: s(t && t.nombre), inicio: hm(t && t.inicio), fin: hm(t && t.fin), seguro: !(t && t.seguro === false)})).filter(t => t.nombre || t.inicio || t.fin).slice(0, 8),
+    materiales: (Array.isArray(r.materiales) ? r.materiales : []).map(m => ({cantidad: parseNum(m && m.cantidad), texto: s(m && m.texto), busquedas: Array.isArray(m && m.busquedas) ? m.busquedas.map(s).filter(Boolean).slice(0, 3) : [], seguro: !(m && m.seguro === false)})).filter(m => m.texto).slice(0, 20),
+    seguros: (r.seguros && typeof r.seguros === 'object') ? r.seguros : {},
+    firma: r.firma_cliente === true ? true : (r.firma_cliente === false ? false : null),
     coches,
     anotaciones: s(r.anotaciones),
     dudas: (Array.isArray(r.dudas) ? r.dudas : []).map(s).filter(Boolean).slice(0, 8)
@@ -2113,19 +2137,23 @@ function aplicarLectura(L, elegidos, extra){
   }
   d.descripcion = L.descripcion;
   if (!L.descripcion) avisos.push('No se lee la descripción de la actuación.');
-  d.tecnicos = L.tecnicos.length ? L.tecnicos : [{nombre: '', inicio: '', fin: ''}];
+  d.tecnicos = L.tecnicos.length ? L.tecnicos.map(t => Object.assign({nombre: t.nombre, inicio: t.inicio, fin: t.fin}, t.seguro === false ? {dudaIA: true} : {})) : [{nombre: '', inicio: '', fin: ''}];
+  const seg = L.seguros || {};
+  d.dudaIA = {numero: seg.numero_parte === false, fecha: seg.fecha === false, inst: seg.instalacion === false, desc: seg.descripcion === false, coches: seg.coches === false};
+  d.firmaPapel = L.firma;
   if (!L.tecnicos.length) avisos.push('No se leen los técnicos ni las horas.');
   L.tecnicos.forEach(t => { if (!t.inicio || !t.fin) avisos.push(`Faltan las horas de ${t.nombre || 'un técnico'}.`); });
   d.materiales = L.materiales.map((m, i) => {
     const cantidad = Number.isFinite(m.cantidad) && m.cantidad > 0 ? m.cantidad : 1;
     const e = elegidos[i];
-    if (e && e.item) return {codigo: e.item[0], descripcion: e.item[1], descripcion2: e.item[2] || '', precio: Number(e.item[4]) || 0, cantidad, escrito: m.texto, ...(e.opciones && e.opciones.length ? {otras: e.opciones.map(it => ({c: it[0], d: it[1], d2: it[2] || '', p: Number(it[4]) || 0}))} : {})};
+    const duda = m.seguro === false || !(Number.isFinite(m.cantidad) && m.cantidad > 0) ? {dudaIA: true} : {};
+    if (e && e.item) return {...duda, codigo: e.item[0], descripcion: e.item[1], descripcion2: e.item[2] || '', precio: Number(e.item[4]) || 0, cantidad, escrito: m.texto, ...(e.opciones && e.opciones.length ? {otras: e.opciones.map(it => ({c: it[0], d: it[1], d2: it[2] || '', p: Number(it[4]) || 0}))} : {})};
     if (e && e.opciones && e.opciones.length) {
       avisos.push(`«${m.texto}»: ${e.opciones.length} opciones del catálogo. Elige la buena en «Material utilizado».`);
-      return {codigo: '', descripcion: m.texto, descripcion2: '', precio: 0, cantidad, escrito: m.texto, opciones: e.opciones.map(o => Array.isArray(o) ? opcionDe(o) : o)};
+      return {...duda, codigo: '', descripcion: m.texto, descripcion2: '', precio: 0, cantidad, escrito: m.texto, opciones: e.opciones.map(o => Array.isArray(o) ? opcionDe(o) : o)};
     }
     avisos.push(`«${m.texto}» no lo he encontrado en el catálogo: va como texto para que la oficina elija el artículo.`);
-    return {codigo: '', descripcion: m.texto, descripcion2: '', precio: 0, cantidad, escrito: m.texto};
+    return {...duda, codigo: '', descripcion: m.texto, descripcion2: '', precio: 0, cantidad, escrito: m.texto};
   });
   if (L.coches !== null) d.coches = L.coches;
   d.numeroPapel = L.numero; d.notasFoto = L.anotaciones; d.deFoto = true;
@@ -2162,10 +2190,122 @@ function renderFotoBox(){
 function renderFotoRes(){
   const d = S.draft, el = $('#p-foto-res');
   if (!d.deFoto) { el.hidden = true; el.innerHTML = ''; return; }
-  const av = d.avisosFoto || [];
+  /* los avisos que ya salen en «Para revisar» no se repiten */
+  const av = (d.avisosFoto || []).filter(a => !/^Ya hay un parte|no está entre las instalaciones|opciones del catálogo|no lo he encontrado en el catálogo|^Faltan las horas|^No se leen los técnicos|^No se lee la fecha|^No se lee la descripción/.test(a));
   el.hidden = false;
-  el.innerHTML = `<p><b>Parte rellenado con la foto.</b> Revisa los recuadros marcados antes de enviarlo.</p>${d.notasFoto ? `<p>Anotaciones a mano: <b>${esc(d.notasFoto)}</b></p>` : ''}${av.length ? `<ul>${av.map(a => `<li>${esc(a)}</li>`).join('')}</ul>` : '<p>No hay nada dudoso.</p>'}<div><button type="button" class="btn-link" id="p-foto-quitar">Vaciar el parte y empezar de cero</button></div>`;
+  el.innerHTML = `<p><b>Parte rellenado con la foto.</b> Revisa los recuadros en amarillo o rojo antes de enviarlo.</p><div id="p-rev-lista" class="rev-lista"></div>${d.notasFoto ? `<p>Anotaciones a mano: <b>${esc(d.notasFoto)}</b></p>` : ''}${av.length ? `<p class="rev-tit"><b>Otros avisos</b></p><ul>${av.map(a => `<li>${esc(a)}</li>`).join('')}</ul>` : ''}<div><button type="button" class="btn-link" id="p-foto-quitar">Vaciar el parte y empezar de cero</button></div>`;
 }
+/* ===== Revisión de lo leído en la foto: cada dato queda como fiable, dudoso, falta, formato raro o no cuadra ===== */
+const REV_TXT = {dudoso: 'Dudoso', falta: 'Falta', formato: 'Formato raro', no_cuadra: 'No cuadra'};
+const REV_PESO = {ok: 0, dudoso: 1, formato: 2, falta: 3, no_cuadra: 4};
+function revPeor(a, b){ return REV_PESO[b.estado] > REV_PESO[a.estado] ? b : a; }
+function rev(estado, motivo){ return {estado, motivos: motivo ? [motivo] : []}; }
+function revJuntar(lista){
+  const r = lista.reduce((acc, x) => { const p = revPeor(acc, x); return {estado: p.estado, motivos: acc.motivos.concat(x.motivos)}; }, rev('ok'));
+  return r;
+}
+function minutosTrabajo(ini, fin){
+  const a = parseHM(ini), b = parseHM(fin);
+  if (a == null || b == null || isNaN(a) || isNaN(b)) return null;
+  return b > a ? b - a : (b < a ? b + 1440 - a : 0);
+}
+function longitudHabitualNumero(){
+  const l = S.partes.map(p => String(p.numeroPapel || p.numero || '')).filter(x => /^\d+$/.test(x)).map(x => x.length);
+  if (l.length < 3) return null;
+  const cuenta = {}; l.forEach(n => { cuenta[n] = (cuenta[n] || 0) + 1; });
+  return Number(Object.keys(cuenta).sort((x, y) => cuenta[y] - cuenta[x])[0]);
+}
+function revisarParte(d){
+  const ia = d.dudaIA || {}, out = {};
+  const dudaIA = 'Gemini no lo lee seguro: compruébalo con el papel';
+  // Nº de parte
+  const num = String(d.numeroPapel || '').trim(), lh = longitudHabitualNumero();
+  out.numero = revJuntar([
+    !num ? rev('falta', 'No se lee el nº de parte') :
+    !/^\d{3,7}$/.test(num) ? rev('formato', 'El nº de parte debería ser solo cifras') :
+    (lh && num.length !== lh) ? rev('formato', `Los partes suelen tener ${lh} cifras`) : rev('ok'),
+    num && S.partes.some(p => String(p.numero) === num || String(p.numeroPapel || '') === num) ? rev('no_cuadra', `Ya hay un parte con el nº ${num}`) : rev('ok'),
+    ia.numero ? rev('dudoso', dudaIA) : rev('ok')
+  ]);
+  // Fecha
+  const hoy = todayISO();
+  const dias = isISO(d.fecha) ? Math.round((new Date(hoy + 'T12:00') - new Date(d.fecha + 'T12:00')) / 864e5) : null;
+  out.fecha = revJuntar([
+    !isISO(d.fecha) ? rev('falta', 'Falta la fecha') :
+    dias < 0 ? rev('no_cuadra', 'La fecha es posterior a hoy') :
+    dias > 60 ? rev('dudoso', `La fecha es de hace ${dias} días`) : rev('ok'),
+    ia.fecha ? rev('dudoso', dudaIA) : rev('ok')
+  ]);
+  // Instalación y descripción
+  out.inst = revJuntar([
+    !d.instalacionId ? rev('falta', 'Elige la instalación') :
+    d.instalacionId === '__new' ? rev('dudoso', 'No coincide con ninguna instalación dada de alta') : rev('ok'),
+    ia.inst ? rev('dudoso', dudaIA) : rev('ok')
+  ]);
+  out.desc = revJuntar([!String(d.descripcion || '').trim() ? rev('falta', 'Falta la descripción') : rev('ok'), ia.desc ? rev('dudoso', dudaIA) : rev('ok')]);
+  out.coches = ia.coches ? rev('dudoso', dudaIA) : rev('ok');
+  // Técnicos y horas
+  const conocidos = new Set(nombresTecnicos().map(n => normDir(n)));
+  out.tecs = d.tecnicos.map(t => {
+    const min = minutosTrabajo(t.inicio, t.fin);
+    return revJuntar([
+      !String(t.nombre || '').trim() ? rev('falta', 'Falta el nombre') :
+      (conocidos.size && !conocidos.has(normDir(t.nombre))) ? rev('dudoso', `«${t.nombre}» no está en la lista de técnicos`) : rev('ok'),
+      (!t.inicio || !t.fin) ? rev('falta', 'Falta la hora de ' + (!t.inicio ? 'inicio' : 'fin')) :
+      min === 0 ? rev('no_cuadra', 'La hora de fin es igual a la de inicio') :
+      min > 14 * 60 ? rev('no_cuadra', `Salen ${fmtH(min)}: más de 14 horas`) :
+      (parseHM(t.fin) < parseHM(t.inicio) && min > 10 * 60) ? rev('no_cuadra', 'La hora de fin es anterior a la de inicio') : rev('ok'),
+      t.dudaIA ? rev('dudoso', dudaIA) : rev('ok')
+    ]);
+  });
+  // Material
+  out.mats = d.materiales.map(m => {
+    const c = Number(m.cantidad);
+    return revJuntar([
+      !(c > 0) ? rev('no_cuadra', 'La cantidad tiene que ser mayor que 0') : rev('ok'),
+      !m.codigo ? rev('dudoso', (m.opciones && m.opciones.length) ? 'Elige el artículo de Sage' : 'No está en el catálogo de Sage') : rev('ok'),
+      m.dudaIA ? rev('dudoso', 'Gemini no lee seguro el material o la cantidad') : rev('ok')
+    ]);
+  });
+  // Firma del cliente en el papel
+  out.firma = d.firmaPapel === false && !(FIRMA && FIRMA.has()) ? rev('dudoso', 'En el papel no se ve la firma del cliente: que firme aquí') : rev('ok');
+  return out;
+}
+function listaRevision(d){
+  if (!d.deFoto) return [];
+  const r = revisarParte(d), out = [];
+  const add = (nombre, x) => { if (x && x.estado !== 'ok') out.push(`${nombre}: ${x.motivos.join('. ')}`); };
+  add('Nº de parte', r.numero); add('Fecha', r.fecha); add('Instalación', r.inst); add('Descripción', r.desc); add('Desplazamiento', r.coches);
+  r.tecs.forEach((x, i) => add(d.tecnicos[i].nombre || `Técnico ${i + 1}`, x));
+  r.mats.forEach((x, i) => add(d.materiales[i].escrito || d.materiales[i].descripcion || `Material ${i + 1}`, x));
+  add('Firma', r.firma);
+  return out;
+}
+function pintaRev(el, x, dentro){
+  if (!el) return;
+  el.classList.remove('rev-dudoso', 'rev-falta', 'rev-formato', 'rev-no_cuadra');
+  let msg = el.querySelector(':scope > .rev-msg') || (dentro && dentro.querySelector(':scope > .rev-msg'));
+  if (!x || x.estado === 'ok') { if (msg) msg.remove(); return; }
+  el.classList.add('rev-' + x.estado);
+  if (!msg) { msg = document.createElement('div'); msg.className = 'rev-msg'; (dentro || el).appendChild(msg); }
+  msg.innerHTML = `<span class="rev-chip">${esc(REV_TXT[x.estado])}</span> ${esc(x.motivos.join('. '))}`;
+}
+function pintarRevision(){
+  const d = S.draft, on = !!d.deFoto;
+  const r = on ? revisarParte(d) : null;
+  const caja = sel => { const el = $(sel); return el && el.closest('.box'); };
+  const dentro = sel => { const b = caja(sel); return b && b.querySelector(':scope > .box-b'); };
+  [['#p-fecha', 'fecha'], ['#p-inst', 'inst'], ['#p-desc', 'desc'], ['#p-coches', 'coches']].forEach(([sel, k]) => pintaRev(caja(sel), r && r[k], dentro(sel)));
+  pintaRev(caja('#p-firma-borrar') || caja('#p-firma'), r && r.firma, dentro('#p-firma-borrar') || dentro('#p-firma'));
+  const n = $('#p-num'); if (n) { n.classList.remove('rev-dudoso', 'rev-falta', 'rev-formato', 'rev-no_cuadra'); n.title = ''; if (r && r.numero.estado !== 'ok') { n.classList.add('rev-' + r.numero.estado); n.title = r.numero.motivos.join('. '); } }
+  $$('#p-tecs .tec').forEach((el, i) => pintaRev(el, r && r.tecs[i]));
+  $$('#p-mats .mat').forEach((el, i) => pintaRev(el, r && r.mats[i]));
+  const res = $('#p-rev-lista');
+  if (res) { const l = on ? listaRevision(d) : []; res.innerHTML = l.length ? `<p class="rev-tit"><b>Para revisar (${l.length})</b></p><ul>${l.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : (on ? '<p class="rev-ok">Todo lo leído cuadra.</p>' : ''); }
+}
+/* la firma se dibuja en el lienzo sin pasar por el formulario: al soltar el dedo o borrar, se revisa otra vez */
+document.addEventListener('pointerup', e => { if (e.target && e.target.id === 'p-firma') setTimeout(() => { try { pintarRevision(); } catch (_) {} }, 50); });
+document.addEventListener('click', e => { if (e.target && e.target.id === 'p-firma-borrar') setTimeout(() => { try { pintarRevision(); } catch (_) {} }, 50); });
 function marcarIA(){
   const on = !!S.draft.deFoto;
   ['#p-fecha', '#p-ct-mt', '#p-inst', '#p-desc', '#p-tecs', '#p-mats', '#p-coches'].forEach(sel => { const el = $(sel); const b = el && el.closest('.box'); if (b) b.classList.toggle('ia', on); });
@@ -2316,6 +2456,7 @@ function renderDetalle(force){
     <dl class="ficha">
       <dt>Fecha</dt><dd>${esc(fmtFechaLarga(p.fecha))}</dd>
       ${p.numeroPapel ? `<dt>Nº en papel</dt><dd class="mono">${esc(p.numeroPapel)}</dd>` : ''}
+      ${Array.isArray(p.revisionFoto) && p.revisionFoto.length ? `<dt>Revisar</dt><dd><ul class="rev-of">${p.revisionFoto.map(x => `<li>${esc(x)}</li>`).join('')}</ul></dd>` : ''}
       <dt>Instalación</dt><dd>${esc(inst ? inst.nombre : '—')}</dd>
       <dt>Cliente Sage</dt><dd>${inst && inst.clienteCodigo ? `<span class="mono">${esc(inst.clienteCodigo)}</span>` : '<span class="warn-t">Falta el código de cliente</span>'}<span>${esc((inst && inst.clienteNombre) || '')}</span></dd>
       <dt>Trabajo</dt><dd>${p.ct ? '<span class="chip mt">CT · MT</span> Media tensión' : '<span class="chip bt">BT</span> Baja tensión'}</dd>

@@ -247,17 +247,22 @@
       tecnicos: {type: 'ARRAY', description: 'Mano de obra empleada: un elemento por técnico', items: {type: 'OBJECT', properties: {
         nombre: {type: 'STRING', description: 'Nombre del técnico; si se parece a uno conocido, el nombre exacto de la lista'},
         inicio: txt('Hora de inicio HH:MM en 24 h, o null si no se lee'),
-        fin: txt('Hora de fin HH:MM en 24 h, o null si no se lee')
-      }, required: ['nombre', 'inicio', 'fin'], propertyOrdering: ['nombre', 'inicio', 'fin']}},
+        fin: txt('Hora de fin HH:MM en 24 h, o null si no se lee'),
+        seguro: {type: 'BOOLEAN', description: 'false si la letra no se lee bien o has tenido que suponerlo; true si está claro'}
+      }, required: ['nombre', 'inicio', 'fin', 'seguro'], propertyOrdering: ['nombre', 'inicio', 'fin', 'seguro']}},
       materiales: {type: 'ARRAY', description: 'Solo material: ni mano de obra ni desplazamiento', items: {type: 'OBJECT', properties: {
         cantidad: {type: 'NUMBER', nullable: true, description: 'Cantidad escrita'},
         texto: {type: 'STRING', description: 'El material tal como está escrito'},
-        busquedas: {type: 'ARRAY', items: {type: 'STRING'}, description: 'De una a tres formas de buscarlo en el catálogo, en mayúsculas y sin abreviaturas'}
-      }, required: ['cantidad', 'texto', 'busquedas'], propertyOrdering: ['cantidad', 'texto', 'busquedas']}},
+        busquedas: {type: 'ARRAY', items: {type: 'STRING'}, description: 'De una a tres formas de buscarlo en el catálogo, en mayúsculas y sin abreviaturas'},
+        seguro: {type: 'BOOLEAN', description: 'false si la letra no se lee bien o has tenido que suponerlo; true si está claro'}
+      }, required: ['cantidad', 'texto', 'busquedas', 'seguro'], propertyOrdering: ['cantidad', 'texto', 'busquedas', 'seguro']}},
       coches: {type: 'INTEGER', nullable: true, description: 'Coches del servicio de desplazamiento; null si el parte no lo dice'},
       firma_cliente: {type: 'BOOLEAN', nullable: true, description: 'true si se ve la firma del cliente, false si el recuadro está vacío'},
       anotaciones: txt('Anotaciones a mano de la oficina, como «P 504»'),
-      dudas: {type: 'ARRAY', items: {type: 'STRING'}, description: 'Lo que no se lee bien o falta'}
+      dudas: {type: 'ARRAY', items: {type: 'STRING'}, description: 'Lo que no se lee bien o falta'},
+      seguros: {type: 'OBJECT', description: 'Para cada dato: true si se lee claro, false si dudas o lo has supuesto', properties: {
+        numero_parte: {type: 'BOOLEAN'}, fecha: {type: 'BOOLEAN'}, instalacion: {type: 'BOOLEAN'}, descripcion: {type: 'BOOLEAN'}, coches: {type: 'BOOLEAN'}
+      }, required: ['numero_parte', 'fecha', 'instalacion', 'descripcion', 'coches'], propertyOrdering: ['numero_parte', 'fecha', 'instalacion', 'descripcion', 'coches']}
     };
     var orden = Object.keys(props);
     return {type: 'OBJECT', properties: props, required: orden, propertyOrdering: orden};

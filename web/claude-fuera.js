@@ -264,9 +264,20 @@
         numero_parte: {type: 'BOOLEAN'}, fecha: {type: 'BOOLEAN'}, instalacion: {type: 'BOOLEAN'}, descripcion: {type: 'BOOLEAN'}, coches: {type: 'BOOLEAN'}
       }, required: ['numero_parte', 'fecha', 'instalacion', 'descripcion', 'coches'], propertyOrdering: ['numero_parte', 'fecha', 'instalacion', 'descripcion', 'coches']}
     };
+    if (conPosiciones()) {
+      /* posición de cada dato en la imagen: [ymin, xmin, ymax, xmax] de 0 a 1000 (la convención de Gemini) */
+      var caja = {type: 'ARRAY', nullable: true, items: {type: 'INTEGER'}, description: '[ymin, xmin, ymax, xmax] de 0 a 1000 sobre la imagen; null si no se ve'};
+      props.tecnicos.items.properties.caja = caja; props.tecnicos.items.required.push('caja'); props.tecnicos.items.propertyOrdering.push('caja');
+      props.materiales.items.properties.caja = caja; props.materiales.items.required.push('caja'); props.materiales.items.propertyOrdering.push('caja');
+      var pk = ['numero_parte', 'fecha', 'localizacion', 'descripcion', 'coches', 'firma_cliente'], pp = {};
+      pk.forEach(function (k) { pp[k] = caja; });
+      props.posiciones = {type: 'OBJECT', description: 'Dónde está escrito cada dato en la imagen', properties: pp, required: pk, propertyOrdering: pk};
+    }
     var orden = Object.keys(props);
     return {type: 'OBJECT', properties: props, required: orden, propertyOrdering: orden};
   }
+  function conPosiciones() { try { return localStorage.getItem('pap-posiciones') === '1'; } catch (_) { return false; } }
+  var PROMPT_POSICIONES = '\n\nAdemás, indica dónde está escrito cada dato en la imagen: en "posiciones" (número de parte, fecha, localización, descripción, desplazamiento y recuadro de la firma del cliente) y en "caja" de cada técnico y cada material, con [ymin, xmin, ymax, xmax] normalizado de 0 a 1000 sobre la imagen. Abarca el texto escrito a mano completo de ese dato, sin el rótulo impreso. Si no se ve, null.';
   function esquemaMateriales() {
     return {type: 'ARRAY', items: {type: 'OBJECT', properties: {
       linea: {type: 'INTEGER', description: 'Número de línea que se está eligiendo'},
@@ -291,7 +302,8 @@
         .then(function (imagenes) {
           var parar = imagenes.length ? contador() : function () {};
           var esquema = null; try { esquema = esquemaPara(prompt, imagenes); } catch (_) {}
-          return llamar('ia', {prompt: prompt + '\n\nResponde únicamente con JSON válido, sin texto antes ni después.', imagenes: imagenes, esquema: esquema, nivel: opts.modelTier === 'quick' ? 'quick' : 'default'}, opts.signal, CFG.iaMaxMs || 180000)
+          var extra = imagenes.length && conPosiciones() ? PROMPT_POSICIONES : '';
+          return llamar('ia', {prompt: prompt + extra + '\n\nResponde únicamente con JSON válido, sin texto antes ni después.', imagenes: imagenes, esquema: esquema, nivel: opts.modelTier === 'quick' ? 'quick' : 'default'}, opts.signal, CFG.iaMaxMs || 180000)
             .finally(parar);
         })
         .then(function (j) { if (j.modelo) console.log('Gemini: ' + j.modelo + ' en ' + j.segundos + ' s'); return sacarJson(j.texto); });

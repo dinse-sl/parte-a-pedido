@@ -233,6 +233,24 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .rev-lista ul,.rev-of{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:3px}
 .rev-lista .rev-tit{margin:4px 0 2px}
 .rev-ok{color:var(--ok);font-weight:600}
+.tareas{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+.tareas:empty{display:none}
+.tarea{display:flex;flex-direction:column;gap:2px;padding:8px 10px;border:1px solid var(--rule);border-radius:4px;background:var(--sheet)}
+.tarea label{display:flex;gap:10px;align-items:flex-start;cursor:pointer}
+.tarea input{width:22px;height:22px;margin:0;flex:none}
+.tarea.hecha{background:var(--ok-soft);border-color:var(--ok)}
+.tarea .oblig{color:var(--bad)}
+.tarea-quien{font-size:12px;color:var(--muted);padding-left:32px}
+.tareas-of{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:3px}
+.tareas-of .si>span:first-child{color:var(--ok);font-weight:700}
+.tareas-of .no>span:first-child{color:var(--bad);font-weight:700}
+.tt{border:1px solid var(--rule);border-radius:4px;padding:10px;display:flex;flex-direction:column;gap:8px}
+.tt-head{display:flex;gap:10px;align-items:center}
+.tt-head input{flex:1;min-width:0;font-weight:600}
+.tt-tareas{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.tt-tareas li{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tt-tareas li input.r-tt-tarea{flex:1 1 220px;min-width:0}
+.tt-ob{display:flex;gap:6px;align-items:center;font-size:13px;white-space:nowrap}
 .errors.avisos{background:var(--warn-soft);border-color:var(--warn);color:var(--ink)}
 .errors .ir-campo{font-size:13px;margin-left:4px}
 .avisos-acc{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:8px}
@@ -477,6 +495,10 @@ button:disabled{opacity:.45;cursor:not-allowed}
           <p class="hint">La oficina completará el código de cliente de Sage y los km.</p>
         </div>
       </div></div>
+      <div class="box" id="p-tipo-box"><label class="lbl" for="p-tipo">Tipo de trabajo y tareas</label><div class="box-b">
+        <select id="p-tipo"></select>
+        <ul class="tareas" id="p-tareas"></ul>
+      </div></div>
       <div class="box"><label class="lbl" for="p-desc">Descripción de la actuación efectuada</label><div class="box-b"><textarea id="p-desc" rows="4" placeholder="Qué se ha encontrado y qué se ha hecho"></textarea></div></div>
       <div class="box"><span class="lbl">Mano de obra empleada</span><div class="box-b">
         <div class="tec-head" aria-hidden="true"><span>Técnico</span><span>Inicio</span><span>Fin</span><span></span></div>
@@ -566,7 +588,39 @@ const DEFAULTS = {
   precioKm: 0.35,
   margen: 30,
   iva: 21,
-  firmaEnvio: 'avisar',   /* firma del cliente al enviar: 'no' | 'avisar' | 'obligatoria' | 'ct' (obligatoria en CT, aviso en BT) */
+  firmaEnvio: 'avisar',
+  /* Tipos de trabajo con su lista de tareas. Ejemplos: la oficina los cambia en Reglas y los ven todos */
+  tiposTrabajo: [
+    {id: 'revision-ct', nombre: 'Revisión CT', tareas: [
+      {id: 't1', texto: 'Inspección visual de celdas y transformador', obligatoria: true},
+      {id: 't2', texto: 'Comprobar nivel y fugas de aceite o dieléctrico', obligatoria: true},
+      {id: 't3', texto: 'Medir temperatura del transformador', obligatoria: false},
+      {id: 't4', texto: 'Revisar fusibles de media tensión', obligatoria: true},
+      {id: 't5', texto: 'Comprobar puesta a tierra', obligatoria: false},
+      {id: 't6', texto: 'Limpieza del centro y cierre de puertas', obligatoria: true}
+    ]},
+    {id: 'averia', nombre: 'Avería', tareas: [
+      {id: 't1', texto: 'Localizar la causa de la avería', obligatoria: true},
+      {id: 't2', texto: 'Dejar la zona sin tensión y señalizada antes de trabajar', obligatoria: true},
+      {id: 't3', texto: 'Reparar o sustituir lo dañado', obligatoria: true},
+      {id: 't4', texto: 'Comprobar el suministro al terminar', obligatoria: true},
+      {id: 't5', texto: 'Informar al cliente de lo hecho', obligatoria: false}
+    ]},
+    {id: 'instalacion-nueva', nombre: 'Instalación nueva', tareas: [
+      {id: 't1', texto: 'Replanteo con el cliente', obligatoria: false},
+      {id: 't2', texto: 'Montaje según proyecto', obligatoria: true},
+      {id: 't3', texto: 'Medir aislamiento y continuidad', obligatoria: true},
+      {id: 't4', texto: 'Probar protecciones (diferenciales y magnetotérmicos)', obligatoria: true},
+      {id: 't5', texto: 'Etiquetar circuitos', obligatoria: false},
+      {id: 't6', texto: 'Explicar la instalación al cliente', obligatoria: false}
+    ]},
+    {id: 'mantenimiento-bt', nombre: 'Mantenimiento BT', tareas: [
+      {id: 't1', texto: 'Revisar cuadros y apriete de bornes', obligatoria: true},
+      {id: 't2', texto: 'Pulsar el botón de prueba de los diferenciales', obligatoria: true},
+      {id: 't3', texto: 'Revisar alumbrado de emergencia', obligatoria: false},
+      {id: 't4', texto: 'Anotar lo que haya que reparar', obligatoria: false}
+    ]}
+  ],   /* firma del cliente al enviar: 'no' | 'avisar' | 'obligatoria' | 'ct' (obligatoria en CT, aviso en BT) */
   base: 'Calle del Desarrollo 3, 11407 Jerez de la Frontera',
   festivos: [
     {f: '2026-01-01', n: 'Año Nuevo'},
@@ -766,7 +820,8 @@ function mergeCfg(o){
     precios: Object.assign({}, x.precios || {}),
     festivos: Array.isArray(x.festivos) ? x.festivos : d.festivos,
     tecnicos: Array.isArray(x.tecnicos) ? x.tecnicos : d.tecnicos,
-    equivalencias: Array.isArray(x.equivalencias) ? x.equivalencias : []
+    equivalencias: Array.isArray(x.equivalencias) ? x.equivalencias : [],
+    tiposTrabajo: Array.isArray(x.tiposTrabajo) ? x.tiposTrabajo : d.tiposTrabajo
   });
 }
 const cfg = () => mergeCfg(S.cfgDb);
@@ -1190,10 +1245,10 @@ function renderParteForm(){
   $('#p-coches').textContent = d.coches;
   S.mapaParte = false;
   const pp = $('#p-pos'); if (pp) pp.checked = posicionesActivas();
-  renderInstSelect(); renderInstInfo(); syncTension(); renderTecs(); renderMats(); renderNuevaMapa(); renderFotoRes(); marcarIA(); montarMapaParte(); pintarRevision();
+  renderInstSelect(); renderInstInfo(); syncTension(); renderTecs(); renderMats(); renderNuevaMapa(); renderFotoRes(); renderTareas(); marcarIA(); montarMapaParte(); pintarRevision();
 }
 function renderParteDyn(){
-  renderInstSelect(); renderInstInfo(); renderDatalist();
+  renderInstSelect(); renderInstInfo(); renderDatalist(); renderTareas();
   $('#p-num').textContent = 'Nº ' + (S.draft.numeroPapel || siguienteNumero());
   updateTecCalcs();
   const ro = !puedeEscribir();
@@ -1229,6 +1284,9 @@ function comprobarEnvio(d){
     }
   });
   d.materiales.forEach((m, i) => { if (!(Number(m.cantidad) > 0)) err(`La cantidad de «${m.descripcion}» tiene que ser mayor que 0.`, '#p-mat-c-' + i); });
+  /* tareas del tipo de trabajo */
+  (d.tareas || []).forEach((k, i) => { if (k.obligatoria && !k.hecha) err(`Falta marcar la tarea «${k.texto}».`, '#p-tarea-' + i); });
+  if (!d.tipoTrabajo && tiposTrabajo().length) av('No has elegido el tipo de trabajo.', '#p-tipo');
   /* firma del cliente según la regla de la oficina */
   const regla = cfg().firmaEnvio || 'avisar';
   const firmada = !!(FIRMA && FIRMA.has());
@@ -1296,6 +1354,8 @@ async function enviarParte(){
       estado: 'pendiente', pedido: null, creadoEn: new Date().toISOString(), creadoPor: S.myId || null,
       numeroPapel: String(d.numeroPapel || ''), deFoto: !!d.deFoto, notasFoto: String(d.notasFoto || ''), foto: null,
       revisionFoto: listaRevision(d).slice(0, 30),
+      tipoTrabajo: d.tipoTrabajo || null,
+      tareas: (d.tareas || []).map(k => ({texto: k.texto, obligatoria: !!k.obligatoria, hecha: !!k.hecha, por: k.por || '', cuando: k.cuando || ''})),
       avisosEnvio: avisos.filter(x => !/^De la foto, sin revisar/.test(x.msg)).map(x => x.msg).slice(0, 20)
     };
     if (S.fotoBlob && S.db && S.assets) {
@@ -1337,6 +1397,20 @@ function bindParte(){
   });
   f.addEventListener('change', e => {
     const t = e.target, d = S.draft;
+    if (t.id === 'p-tipo') {
+      const tipo = tiposTrabajo().find(x => x.id === t.value);
+      const antes = d.tareas || [];
+      d.tipoTrabajo = tipo ? {id: tipo.id, nombre: tipo.nombre} : null;
+      /* copia de las tareas en el parte; si ya estaban marcadas (mismo texto), se conservan */
+      d.tareas = tipo ? tipo.tareas.map(k => { const v = antes.find(a => a.texto === k.texto && a.hecha); return Object.assign({texto: k.texto, obligatoria: !!k.obligatoria, hecha: false}, v ? {hecha: true, por: v.por, cuando: v.cuando} : {}); }) : [];
+      renderTareas(); hideSent(); saveDraft(); return;
+    }
+    if (t.classList.contains('tarea-chk')) {
+      const k = (d.tareas || [])[+t.closest('.tarea').dataset.i]; if (!k) return;
+      k.hecha = t.checked;
+      if (t.checked) { k.por = quienMarca(); k.cuando = new Date().toISOString(); } else { delete k.por; delete k.cuando; }
+      renderTareas(); hideSent(); saveDraft(); return;
+    }
     if (t.id === 'p-pos') {
       try { localStorage.setItem('pap-posiciones', t.checked ? '1' : '0'); } catch (_) {}
       if (t.checked && d.deFoto && !Object.values(d.cajas || {}).some(Boolean)) toast('Se verá en la próxima foto que leas.');
@@ -2419,6 +2493,31 @@ function pintarRecortes(){
   const n = $('#p-num-recorte'); if (n) n.innerHTML = posicionesActivas() && d.deFoto ? recorteHTML(c.numero, 'Nº de parte') : '';
 }
 document.addEventListener('click', e => { const r = e.target.closest && e.target.closest('.recorte'); if (r) r.classList.toggle('grande'); });
+/* ===== Tipo de trabajo y lista de tareas ===== */
+function tiposTrabajo(){ return (cfg().tiposTrabajo || []).filter(t => t && t.nombre); }
+function limpiarTipos(lista){
+  return (lista || []).map(t => ({id: t.id, nombre: String(t.nombre || '').trim(), tareas: (t.tareas || []).map(k => ({id: k.id, texto: String(k.texto || '').trim(), obligatoria: !!k.obligatoria})).filter(k => k.texto)}))
+    .filter(t => t.nombre);
+}
+function quienMarca(){ const t = (S.draft.tecnicos || []).find(x => String(x.nombre || '').trim()); return t ? t.nombre.trim() : ''; }
+function horaCorta(iso){ try { const d = new Date(iso); return d.toLocaleString('es-ES', {day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit'}); } catch (_) { return ''; } }
+function renderTareas(){
+  const d = S.draft, sel = $('#p-tipo'), ul = $('#p-tareas'); if (!sel || !ul) return;
+  const tipos = tiposTrabajo();
+  $('#p-tipo-box').hidden = !tipos.length && !d.tipoTrabajo;
+  const actual = d.tipoTrabajo ? d.tipoTrabajo.id : '';
+  /* si el tipo del parte ya no está en Reglas, se sigue mostrando con su nombre */
+  const opciones = tipos.map(t => [t.id, t.nombre]);
+  if (actual && !opciones.some(o => o[0] === actual)) opciones.push([actual, d.tipoTrabajo.nombre]);
+  sel.innerHTML = '<option value="">Elige el tipo de trabajo…</option>' + opciones.map(([id, n]) => `<option value="${esc(id)}"${id === actual ? ' selected' : ''}>${esc(n)}</option>`).join('');
+  const tareas = d.tareas || [];
+  ul.innerHTML = tareas.length ? tareas.map((k, i) => `<li class="tarea${k.hecha ? ' hecha' : ''}" data-i="${i}">
+      <label><input type="checkbox" class="tarea-chk" id="p-tarea-${i}"${k.hecha ? ' checked' : ''}><span>${esc(k.texto)}${k.obligatoria ? ' <b class="oblig" title="Obligatoria">*</b>' : ''}</span></label>
+      ${k.hecha ? `<span class="tarea-quien">${esc([k.por, horaCorta(k.cuando)].filter(Boolean).join(' · '))}</span>` : ''}
+    </li>`).join('') + (tareas.some(k => k.obligatoria) ? '<li class="hint">* Obligatoria para poder enviar el parte.</li>' : '')
+    : (actual ? '<li class="hint">Este tipo de trabajo no tiene tareas.</li>' : '');
+}
+
 function marcarIA(){
   const on = !!S.draft.deFoto;
   ['#p-fecha', '#p-ct-mt', '#p-inst', '#p-desc', '#p-tecs', '#p-mats', '#p-coches'].forEach(sel => { const el = $(sel); const b = el && el.closest('.box'); if (b) b.classList.toggle('ia', on); });
@@ -2569,6 +2668,8 @@ function renderDetalle(force){
     <dl class="ficha">
       <dt>Fecha</dt><dd>${esc(fmtFechaLarga(p.fecha))}</dd>
       ${p.numeroPapel ? `<dt>Nº en papel</dt><dd class="mono">${esc(p.numeroPapel)}</dd>` : ''}
+      ${p.tipoTrabajo ? `<dt>Tipo de trabajo</dt><dd>${esc(p.tipoTrabajo.nombre)}</dd>` : ''}
+      ${Array.isArray(p.tareas) && p.tareas.length ? `<dt>Tareas</dt><dd><ul class="tareas-of">${p.tareas.map(k => `<li class="${k.hecha ? 'si' : 'no'}"><span aria-hidden="true">${k.hecha ? '✓' : '✗'}</span> ${esc(k.texto)}${k.obligatoria ? ' *' : ''}${k.hecha && (k.por || k.cuando) ? ` <span class="muted">· ${esc([k.por, horaCorta(k.cuando)].filter(Boolean).join(' · '))}</span>` : ''}</li>`).join('')}</ul></dd>` : ''}
       ${Array.isArray(p.avisosEnvio) && p.avisosEnvio.length ? `<dt>Enviado con avisos</dt><dd><ul class="rev-of">${p.avisosEnvio.map(x => `<li>${esc(x)}</li>`).join('')}</ul></dd>` : ''}
       ${Array.isArray(p.revisionFoto) && p.revisionFoto.length ? `<dt>Revisar</dt><dd><ul class="rev-of">${p.revisionFoto.map(x => `<li>${esc(x)}</li>`).join('')}</ul></dd>` : ''}
       <dt>Instalación</dt><dd>${esc(inst ? inst.nombre : '—')}</dd>
@@ -2877,6 +2978,15 @@ function renderReglas(force){
       <div class="chips">${r.tecnicos.length ? r.tecnicos.map(n => `<span class="tchip">${esc(n)}${ed ? `<button type="button" class="r-t-x" data-n="${esc(n)}" aria-label="Quitar a ${esc(n)}">×</button>` : ''}</span>`).join('') : '<span class="muted">Sin técnicos en la lista.</span>'}</div>
       ${ed ? '<div class="add-row"><input id="r-t-nombre" placeholder="Nombre y apellido" aria-label="Nombre del técnico"><button type="button" class="btn" id="r-t-add">Añadir técnico</button></div>' : ''}
     </div></section>
+    <section class="box"><span class="lbl">Tipos de trabajo y tareas <span class="lbl-note">${r.tiposTrabajo.length} tipos</span></span><div class="box-b">
+      <p class="hint">Al rellenar el parte se elige el tipo de trabajo y salen sus tareas para marcar. Las marcadas como obligatorias hay que hacerlas para poder enviar el parte. Los cambios valen para los partes nuevos.</p>
+      ${r.tiposTrabajo.map((t, ti) => `<div class="tt" data-t="${ti}">
+        <div class="tt-head"><input class="r-tt-nombre" value="${esc(t.nombre)}" aria-label="Nombre del tipo de trabajo"${ro}>${ed ? `<button type="button" class="btn-link r-tt-del" data-t="${ti}">Quitar tipo</button>` : ''}</div>
+        <ul class="tt-tareas">${(t.tareas || []).map((k, ki) => `<li data-k="${ki}"><input class="r-tt-tarea" value="${esc(k.texto)}" aria-label="Tarea"${ro}><label class="tt-ob"><input type="checkbox" class="r-tt-ob"${k.obligatoria ? ' checked' : ''}${ed ? '' : ' disabled'}> Obligatoria</label>${ed ? `<button type="button" class="icon-btn r-tt-del-tarea" aria-label="Quitar la tarea">×</button>` : ''}</li>`).join('')}</ul>
+        ${ed ? `<button type="button" class="btn sm r-tt-add-tarea" data-t="${ti}">Añadir tarea</button>` : ''}
+      </div>`).join('') || '<p class="muted">No hay tipos de trabajo.</p>'}
+      ${ed ? '<div class="add-row"><input id="r-tt-nuevo" placeholder="Nuevo tipo de trabajo, p. ej. Revisión anual" aria-label="Nombre del nuevo tipo de trabajo"><button type="button" class="btn" id="r-tt-add">Añadir tipo</button></div>' : ''}
+    </div></section>
     <section class="box"><span class="lbl">Equivalencias de material <span class="lbl-note">${r.equivalencias.length} reglas</span></span><div class="box-b">
       <p class="hint">Lo que escribe el técnico → artículo de Sage, con precio fijo o margen opcional. Se usa al leer fotos, al escribir material a mano y al calcular el pedido.</p>
       ${r.equivalencias.length ? `<div class="scroll-x"><table class="tbl"><thead><tr><th>Texto del técnico</th><th>Código Sage</th><th>Descripción</th><th>Precio fijo</th><th>Margen</th>${ed ? '<th></th>' : ''}</tr></thead><tbody>${r.equivalencias.map((e, i) => `<tr><td>${esc(e.t)}</td><td class="mono">${esc(e.c)}</td><td>${esc(e.d)}</td><td class="mono">${e.pf != null ? eur(e.pf) : '—'}</td><td class="mono">${e.mg != null ? num(e.mg) + ' %' : '—'}</td>${ed ? `<td><button type="button" class="icon-btn r-e-x" data-i="${i}" aria-label="Quitar ${esc(e.t)}">×</button></td>` : ''}</tr>`).join('')}</tbody></table></div>` : '<p class="muted">Todavía no hay equivalencias. Rellena el Excel y súbelo aquí.</p>'}
@@ -2888,7 +2998,7 @@ function renderReglas(force){
 }
 async function guardarReglas(){
   const r = S.reglas; if (!r) return;
-  const data = {manoObra: r.manoObra, precios: r.precios, articuloKm: r.articuloKm, precioKm: Number(r.precioKm) || 0, margen: Number(r.margen) || 0, iva: Number(r.iva) || 0, base: r.base || '', firmaEnvio: r.firmaEnvio || 'avisar', festivos: r.festivos, tecnicos: r.tecnicos, equivalencias: r.equivalencias || []};
+  const data = {manoObra: r.manoObra, precios: r.precios, articuloKm: r.articuloKm, precioKm: Number(r.precioKm) || 0, margen: Number(r.margen) || 0, iva: Number(r.iva) || 0, base: r.base || '', firmaEnvio: r.firmaEnvio || 'avisar', tiposTrabajo: limpiarTipos(r.tiposTrabajo), festivos: r.festivos, tecnicos: r.tecnicos, equivalencias: r.equivalencias || []};
   const ok = await guardar(() => dbSet('config/general', data), 'Reglas guardadas');
   if (ok) { setReglasDirty(false); renderReglas(true); }
 }
@@ -2907,6 +3017,7 @@ function bindReglas(){
       } catch (_) { toast('No se ha podido leer el Excel.', true); }
       return;
     }
+    if (e.target.classList.contains('r-tt-ob') && S.reglas && puedeEditarReglas()) { S.reglas.tiposTrabajo[+e.target.closest('.tt').dataset.t].tareas[+e.target.closest('li').dataset.k].obligatoria = e.target.checked; setReglasDirty(true); return; }
     if (e.target.id === 'r-firma' && S.reglas && puedeEditarReglas()) { S.reglas.firmaEnvio = e.target.value; setReglasDirty(true); return; }
     prueba(e.target);
   });
@@ -2914,6 +3025,8 @@ function bindReglas(){
     const t = e.target, r = S.reglas; if (!r) return;
     if (prueba(t)) return;
     if (!puedeEditarReglas()) return;
+    if (t.classList.contains('r-tt-nombre')) { r.tiposTrabajo[+t.closest('.tt').dataset.t].nombre = t.value; setReglasDirty(true); return; }
+    if (t.classList.contains('r-tt-tarea')) { r.tiposTrabajo[+t.closest('.tt').dataset.t].tareas[+t.closest('li').dataset.k].texto = t.value; setReglasDirty(true); return; }
     const val = parseNum(t.value);
     if (t.classList.contains('r-precio')) { t.classList.toggle('invalid', isNaN(val)); if (isNaN(val)) return; r.precios[t.dataset.code] = val; }
     else if (t.id === 'r-km') { t.classList.toggle('invalid', isNaN(val)); if (isNaN(val)) return; r.precioKm = val; }
@@ -2937,6 +3050,17 @@ function bindReglas(){
     }
     else if (b.classList.contains('r-f-x')) { r.festivos = r.festivos.filter(x => x.f !== b.dataset.f); setReglasDirty(true); renderReglas(true); }
     else if (b.id === 'r-t-add') { const n = $('#r-t-nombre').value.trim(); if (!n) return; if (!r.tecnicos.includes(n)) r.tecnicos.push(n); r.tecnicos.sort((a, x) => a.localeCompare(x, 'es')); setReglasDirty(true); renderReglas(true); }
+    else if (b.classList.contains('r-tt-add-tarea') && puedeEditarReglas()) {
+      const tt = r.tiposTrabajo[+b.dataset.t]; tt.tareas = tt.tareas || [];
+      tt.tareas.push({id: 't' + Date.now().toString(36), texto: '', obligatoria: false}); setReglasDirty(true); renderReglas(true);
+      const ins = $$(`.tt[data-t="${b.dataset.t}"] .r-tt-tarea`); if (ins.length) ins[ins.length - 1].focus();
+    }
+    else if (b.classList.contains('r-tt-del-tarea') && puedeEditarReglas()) { r.tiposTrabajo[+b.closest('.tt').dataset.t].tareas.splice(+b.closest('li').dataset.k, 1); setReglasDirty(true); renderReglas(true); }
+    else if (b.classList.contains('r-tt-del') && puedeEditarReglas()) { r.tiposTrabajo.splice(+b.dataset.t, 1); setReglasDirty(true); renderReglas(true); }
+    else if (b.id === 'r-tt-add' && puedeEditarReglas()) {
+      const n = $('#r-tt-nuevo').value.trim(); if (!n) { toast('Escribe el nombre del tipo de trabajo.', true); return; }
+      r.tiposTrabajo.push({id: 'tipo-' + Date.now().toString(36), nombre: n, tareas: []}); setReglasDirty(true); renderReglas(true);
+    }
     else if (b.classList.contains('r-t-x')) { r.tecnicos = r.tecnicos.filter(x => x !== b.dataset.n); setReglasDirty(true); renderReglas(true); }
   });
 }

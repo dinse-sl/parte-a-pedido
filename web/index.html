@@ -2116,7 +2116,13 @@ Responde solo con un objeto JSON con esta forma:
 
 Reglas:
 - Las fechas están en formato español día-mes-año: «6-8-26» es el 6 de agosto de 2026, "2026-08-06".
-- Horas en 24 h con el formato "HH:MM" («17:00H» es "17:00"). Si falta una hora, pon null y dilo en "dudas".
+- En «TIEMPO DE ACTUACIÓN» cada técnico tiene DOS horas: la de inicio y la de fin (no una duración). Pueden venir como «17:00H - 19:30H», «8h 16h», «8 - 16» o «de 8 a 16»: «8h 16h» es inicio "08:00" y fin "16:00".
+- Horas en 24 h con el formato "HH:MM" («17:00H» es "17:00", «8h» es "08:00", «16h» es "16:00"). Si falta una hora, pon null y dilo en "dudas".
+- El recuadro de arriba tiene cuatro líneas: CLIENTE, DIRECCIÓN, POBLACIÓN y TELÉFONO. El técnico a veces escribe entre dos líneas: si es un nombre de pueblo o ciudad (por ejemplo «Torrecera», «Jerez», «Sanlúcar») va en "poblacion", aunque esté a la altura de DIRECCIÓN.
+- "localizacion" es lo escrito en LOCALIZACIÓN DE LA INSTALACIÓN: el sitio concreto del trabajo (por ejemplo «Bodega», «C.T. PK 72», «Nave 3»). No lo mezcles con el cliente ni con la población. Quita puntos o comas sueltos al final.
+- Unas comillas («"» o «,,») o dos rayitas («||») en una línea de material significan «lo mismo que la línea de arriba»: copia ese texto y añade lo nuevo. Por ejemplo, debajo de «Térmico 2x16A», la línea «" 2x25A DPN» es «Térmico 2x25A DPN».
+- Una línea como «Servicio vehículo», «Servicio desplazamiento» o «Servicio coche» no es material: su cantidad va en "coches".
+- El número de parte es el impreso en rojo más nítido; si debajo se transparenta otro número de la copia, ignóralo.
 - Si un técnico se parece a uno de los conocidos (por ejemplo «Glez» es González), usa el nombre exacto de la lista. Si no, escríbelo con mayúscula inicial.
 - "materiales" lleva solo material. Una línea de desplazamiento o de coche (como «1 SERVICIO DESPLAZAMIENTO COCHE») no es material: su cantidad va en "coches". La mano de obra tampoco es material.
 - "busquedas": de una a tres formas de buscar ese material en un catálogo, en mayúsculas, sin abreviaturas y conservando referencias y medidas. Usa también el nombre genérico cuando el técnico use una marca o un nombre coloquial. Ejemplos: «FUSIBLE M.T IBD1 25A» da ["FUSIBLE IBD1 25A", "FUSIBLE MEDIA TENSION 25A"]; «rejiband 300» da ["REJIBAND 300", "BANDEJA HILO 300"]; «puntera 4mm» da ["PUNTERA HUECA 4", "PUNTERA 4MM"].
@@ -2146,12 +2152,18 @@ Responde solo con un array JSON: [{"linea": 0, "opciones": [{"codigo": "CÓDIGO"
 function normalizarLectura(r){
   r = (r && typeof r === 'object' && !Array.isArray(r)) ? r : {};
   const s = v => (v == null ? '' : String(v)).trim();
-  const hm = v => {
-    const t = s(v); const m = /(\d{1,2})\s*[:.,hH]\s*(\d{2})/.exec(t) || /^(\d{1,2})$/.exec(t);
-    if (!m) return '';
-    const h = +m[1], mi = m[2] ? +m[2] : 0;
-    return (h <= 23 && mi <= 59) ? String(h).padStart(2, '0') + ':' + String(mi).padStart(2, '0') : '';
+  /* todas las horas que haya en un texto: «17:00H», «8h», «16 h», «8.30», «8», «de 8 a 16»… */
+  const horasDe = v => {
+    /* «8:30», «8.30» o «8h30» llevan minutos; en «8h 16h» la h solo cierra la hora */
+    const out = [], re = /(?<![\d])(\d{1,2})(?:\s*[:.,']\s*(\d{2})|[hH](\d{2})(?![\d]))?\s*(?:h(?:oras?)?|H)?(?![\d])/g;
+    let m; const t = s(v);
+    while ((m = re.exec(t))) {
+      const h = +m[1], mi = m[2] ? +m[2] : (m[3] ? +m[3] : 0);
+      if (h <= 24 && mi <= 59) out.push(String(h === 24 ? 0 : h).padStart(2, '0') + ':' + String(mi).padStart(2, '0'));
+    }
+    return out;
   };
+  const hm = v => horasDe(v)[0] || '';
   /* caja [ymin, xmin, ymax, xmax] de 0 a 1000; se descarta si no tiene sentido */
   const caja = v => {
     if (!Array.isArray(v) || v.length !== 4) return null;
@@ -2169,7 +2181,12 @@ function normalizarLectura(r){
     instalacionId: s(r.instalacion_id),
     esCt: r.es_ct === true ? true : (r.es_ct === false ? false : null),
     descripcion: s(r.descripcion),
-    tecnicos: (Array.isArray(r.tecnicos) ? r.tecnicos : []).map(t => ({nombre: s(t && t.nombre), inicio: hm(t && t.inicio), fin: hm(t && t.fin), seguro: !(t && t.seguro === false), caja: caja(t && t.caja)})).filter(t => t.nombre || t.inicio || t.fin).slice(0, 8),
+    tecnicos: (Array.isArray(r.tecnicos) ? r.tecnicos : []).map(t => {
+      /* si las dos horas vienen juntas en un campo («8h 16h», «8-16»), la primera es el inicio y la segunda el fin */
+      const hi = horasDe(t && t.inicio), hf = horasDe(t && t.fin);
+      const ini = hi[0] || '', fin = hf.length ? hf[hf.length - 1] : (hi.length > 1 ? hi[hi.length - 1] : '');
+      return Object.assign(t || {}, {_ini: ini, _fin: fin});
+    }).map(t => ({nombre: s(t && t.nombre), inicio: t._ini, fin: t._fin, seguro: !(t && t.seguro === false), caja: caja(t && t.caja)})).filter(t => t.nombre || t.inicio || t.fin).slice(0, 8),
     materiales: (Array.isArray(r.materiales) ? r.materiales : []).map(m => ({cantidad: parseNum(m && m.cantidad), texto: s(m && m.texto), busquedas: Array.isArray(m && m.busquedas) ? m.busquedas.map(s).filter(Boolean).slice(0, 3) : [], seguro: !(m && m.seguro === false), caja: caja(m && m.caja)})).filter(m => m.texto).slice(0, 20),
     seguros: (r.seguros && typeof r.seguros === 'object') ? r.seguros : {},
     firma: r.firma_cliente === true ? true : (r.firma_cliente === false ? false : null),
@@ -2331,9 +2348,10 @@ function aplicarLectura(L, elegidos, extra){
     d.instalacionId = inst.id; d.ct = !!inst.ct;
     if (L.esCt !== null && L.esCt !== !!inst.ct) avisos.push(`«${inst.nombre}» está dada de alta como ${inst.ct ? 'CT (media tensión)' : 'baja tensión'}, pero el parte parece ${L.esCt ? 'de un CT' : 'de baja tensión'}. Revisa «Trabajo en».`);
   } else {
-    const nombre = [L.cliente, L.localizacion].filter(Boolean).join(' · ') || 'Instalación sin nombre';
+    const limpio = x => String(x || '').replace(/[\s.,;:·-]+$/, '').trim();
+    const nombre = [limpio(L.cliente), limpio(L.localizacion)].filter(Boolean).join(' · ') + (limpio(L.poblacion) ? ` (${limpio(L.poblacion)})` : '') || 'Instalación sin nombre';
     d.instalacionId = '__new';
-    d.nuevaInst = {nombre, cliente: L.cliente, ubicacion: [L.direccion, L.poblacion].filter(Boolean).join(', '), ct: L.esCt === true};
+    d.nuevaInst = {nombre: nombre.trim() || 'Instalación sin nombre', cliente: limpio(L.cliente), ubicacion: [limpio(L.direccion), limpio(L.poblacion)].filter(Boolean).join(', '), ct: L.esCt === true};
     d.ct = L.esCt;
     avisos.push(`«${nombre}» no está entre las instalaciones: se dará de alta como nueva. Si ya existe, elígela en el desplegable.`);
   }

@@ -228,6 +228,54 @@
     if (a >= 0 && b > a) { try { return JSON.parse(t.slice(a, b + 1)); } catch (_) {} }
     throw error('Respuesta no válida', 'invalid_json');
   }
+  /* Plantilla fija de respuesta (responseSchema de Gemini): misma forma siempre, con tipos y valores permitidos.
+     Los campos son los que ya lee la app (normalizarLectura); los textos de cada campo repiten las reglas del prompt. */
+  function txt(desc) { return {type: 'STRING', nullable: true, description: desc}; }
+  function esquemaLectura() {
+    var P = window.PAP || {}, ids = [];
+    try { ids = ((P.S && P.S.inst) || []).map(function (i) { return String(i.id || ''); }).filter(Boolean).slice(0, 300); } catch (_) {}
+    var props = {
+      numero_parte: txt('Número del parte impreso (normalmente en rojo), solo las cifras'),
+      fecha: txt('Fecha del parte en formato AAAA-MM-DD (en el papel va día-mes-año)'),
+      cliente: txt('Cliente tal como está escrito'),
+      direccion: txt('Dirección'),
+      poblacion: txt('Población'),
+      localizacion: txt('Localización de la instalación'),
+      instalacion_id: ids.length ? {type: 'STRING', nullable: true, enum: ids, description: 'id de la instalación de la lista si encaja claramente; si no, null'} : txt('id de la instalación de la lista o null'),
+      es_ct: {type: 'BOOLEAN', nullable: true, description: 'true si es en un centro de transformación (media tensión), false si es baja tensión, null si no se sabe'},
+      descripcion: txt('Descripción de la actuación efectuada, transcrita sin añadir nada'),
+      tecnicos: {type: 'ARRAY', description: 'Mano de obra empleada: un elemento por técnico', items: {type: 'OBJECT', properties: {
+        nombre: {type: 'STRING', description: 'Nombre del técnico; si se parece a uno conocido, el nombre exacto de la lista'},
+        inicio: txt('Hora de inicio HH:MM en 24 h, o null si no se lee'),
+        fin: txt('Hora de fin HH:MM en 24 h, o null si no se lee')
+      }, required: ['nombre', 'inicio', 'fin'], propertyOrdering: ['nombre', 'inicio', 'fin']}},
+      materiales: {type: 'ARRAY', description: 'Solo material: ni mano de obra ni desplazamiento', items: {type: 'OBJECT', properties: {
+        cantidad: {type: 'NUMBER', nullable: true, description: 'Cantidad escrita'},
+        texto: {type: 'STRING', description: 'El material tal como está escrito'},
+        busquedas: {type: 'ARRAY', items: {type: 'STRING'}, description: 'De una a tres formas de buscarlo en el catálogo, en mayúsculas y sin abreviaturas'}
+      }, required: ['cantidad', 'texto', 'busquedas'], propertyOrdering: ['cantidad', 'texto', 'busquedas']}},
+      coches: {type: 'INTEGER', nullable: true, description: 'Coches del servicio de desplazamiento; null si el parte no lo dice'},
+      firma_cliente: {type: 'BOOLEAN', nullable: true, description: 'true si se ve la firma del cliente, false si el recuadro está vacío'},
+      anotaciones: txt('Anotaciones a mano de la oficina, como «P 504»'),
+      dudas: {type: 'ARRAY', items: {type: 'STRING'}, description: 'Lo que no se lee bien o falta'}
+    };
+    var orden = Object.keys(props);
+    return {type: 'OBJECT', properties: props, required: orden, propertyOrdering: orden};
+  }
+  function esquemaMateriales() {
+    return {type: 'ARRAY', items: {type: 'OBJECT', properties: {
+      linea: {type: 'INTEGER', description: 'Número de línea que se está eligiendo'},
+      opciones: {type: 'ARRAY', description: 'Entre 4 y 8 opciones, la más probable primero', items: {type: 'OBJECT', properties: {
+        codigo: {type: 'STRING', description: 'Código de uno de los candidatos de esa línea'},
+        nota: {type: 'STRING', description: 'Muy breve: qué es y en qué se diferencia'}
+      }, required: ['codigo', 'nota'], propertyOrdering: ['codigo', 'nota']}}
+    }, required: ['linea', 'opciones'], propertyOrdering: ['linea', 'opciones']}};
+  }
+  function esquemaPara(prompt, imagenes) {
+    if (imagenes.length) return esquemaLectura();
+    if (/"candidatos"/.test(prompt) && /"linea"/.test(prompt)) return esquemaMateriales();
+    return null;
+  }
   var sample = {
     /* una sola imagen del parte entero: se sube mucho antes desde el móvil y Gemini responde antes */
     limits: function () { return Promise.resolve({images: {maxCount: 1}}); },
@@ -237,7 +285,8 @@
       return Promise.all(imgs.map(function (b) { return aBase64(b).then(function (s) { return {mime: b.type || 'image/jpeg', b64: s}; }); }))
         .then(function (imagenes) {
           var parar = imagenes.length ? contador() : function () {};
-          return llamar('ia', {prompt: prompt + '\n\nResponde únicamente con JSON válido, sin texto antes ni después.', imagenes: imagenes, nivel: opts.modelTier === 'quick' ? 'quick' : 'default'}, opts.signal, CFG.iaMaxMs || 180000)
+          var esquema = null; try { esquema = esquemaPara(prompt, imagenes); } catch (_) {}
+          return llamar('ia', {prompt: prompt + '\n\nResponde únicamente con JSON válido, sin texto antes ni después.', imagenes: imagenes, esquema: esquema, nivel: opts.modelTier === 'quick' ? 'quick' : 'default'}, opts.signal, CFG.iaMaxMs || 180000)
             .finally(parar);
         })
         .then(function (j) { if (j.modelo) console.log('Gemini: ' + j.modelo + ' en ' + j.segundos + ' s'); return sacarJson(j.texto); });

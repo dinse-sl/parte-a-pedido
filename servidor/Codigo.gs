@@ -50,7 +50,7 @@ const MODELO_RESERVA = 'gemini-3.8-flash';      // el más listo pero más lento
  *    Copia la URL que termina en /exec y pégala en web/config.js
  * ------------------------------------------------------------------------------------------------ */
 
-const VERSION_SERVIDOR = '2026-11-20.5';
+const VERSION_SERVIDOR = '2026-11-23.1';
 const HOJA = 'datos';
 const TROZO = 45000; // una celda admite 50.000 caracteres: los documentos grandes se reparten en varias columnas
 
@@ -206,9 +206,12 @@ function ia(q) {
     /* Leer un parte no necesita «pensar» mucho: con poco razonamiento responde bastante más rápido */
     const pensar = /^gemini-2\./.test(modelos[m]) ? {thinkingBudget: 0} : {thinkingLevel: 'low'};
     let conPensar = true, res, code, j, t0 = Date.now();
-    for (let intento = 0; intento < 3; intento++) {
+    /* plantilla fija de respuesta (responseSchema): la respuesta sale siempre con la misma forma */
+    let esquema = q.esquema && typeof q.esquema === 'object' && JSON.stringify(q.esquema).length < 60000 ? q.esquema : null;
+    for (let intento = 0; intento < 4; intento++) {
       const gc = {responseMimeType: 'application/json', temperature: 0.1};
       if (conPensar) gc.thinkingConfig = pensar;
+      if (esquema) gc.responseSchema = esquema;
       t0 = Date.now();
       try {
         res = UrlFetchApp.fetch('https://generativelanguage.googleapis.com/v1beta/models/' + modelos[m] + ':generateContent', {
@@ -223,11 +226,13 @@ function ia(q) {
       }
       /* si el modelo no admite el ajuste de razonamiento, se repite sin él */
       if (code === 400 && conPensar && /thinking/i.test(JSON.stringify(j))) { conPensar = false; continue; }
+      /* si el modelo no acepta la plantilla, se repite sin ella (el prompt ya describe la forma) */
+      if (code === 400 && esquema && /schema|response_?schema|enum|nullable|propertyOrdering/i.test(JSON.stringify(j))) { console.log('Plantilla rechazada: ' + String(j.error && j.error.message || '').slice(0, 200)); esquema = null; continue; }
       /* saturado: un segundo intento con el mismo modelo tras una pausa corta */
       if ((code === 503 || code === 500) && intento === 0 && Date.now() - inicio < 20000) { Utilities.sleep(2000); continue; }
       break;
     }
-    console.log('Gemini ' + modelos[m] + ' · ' + (q.imagenes || []).length + ' imágenes · HTTP ' + code + ' · ' + Math.round((Date.now() - t0) / 1000) + ' s');
+    console.log('Gemini ' + modelos[m] + ' · ' + (q.imagenes || []).length + ' imágenes · ' + (esquema ? 'con plantilla' : 'sin plantilla') + ' · HTTP ' + code + ' · ' + Math.round((Date.now() - t0) / 1000) + ' s');
     if (code === 200) {
       const c = (j.candidates || [])[0];
       const texto = c && c.content && c.content.parts ? c.content.parts.map(function (p) { return p.text || ''; }).join('') : '';

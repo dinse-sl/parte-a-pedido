@@ -287,7 +287,19 @@
       }, required: ['codigo', 'nota'], propertyOrdering: ['codigo', 'nota']}}
     }, required: ['linea', 'opciones'], propertyOrdering: ['linea', 'opciones']}};
   }
+  function esquemaPlaca() {
+    var t = function (d) { return {type: 'STRING', nullable: true, description: d}; };
+    var props = {
+      tipo: {type: 'STRING', nullable: true, enum: ['Transformador', 'Celda de MT', 'Cuadro de BT', 'Grupo electrógeno', 'Batería de condensadores', 'SAI', 'Otro'], description: 'Tipo de equipo'},
+      fabricante: t('Marca o fabricante'), modelo: t('Modelo o referencia'), numero_serie: t('Número de serie, tal cual'),
+      anio: t('Año de fabricación (4 cifras)'), potencia: t('Potencia con su unidad, p. ej. 630 kVA'), tension: t('Tensiones con unidades, p. ej. 20 kV / 420 V'),
+      notas: t('Otros datos útiles de la placa (grupo de conexión, Ucc, peso, norma…)')
+    };
+    var orden = Object.keys(props);
+    return {type: 'OBJECT', properties: props, required: orden, propertyOrdering: orden};
+  }
   function esquemaPara(prompt, imagenes) {
+    if (imagenes.length && /PLACA DE CARACTERÍSTICAS/.test(prompt)) return esquemaPlaca();
     if (imagenes.length) return esquemaLectura();
     if (/"candidatos"/.test(prompt) && /"linea"/.test(prompt)) return esquemaMateriales();
     return null;

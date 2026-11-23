@@ -1414,7 +1414,11 @@ async function enviarParte(){
   S.busy = false; $('#p-enviar').textContent = 'Enviar parte a la oficina';
   if (ok) {
     S.draft = nuevoDraft(); FIRMA && FIRMA.clear(); limpiarFoto(); saveDraft(); renderParteForm();
-    const s = $('#p-sent'); s.innerHTML = `Parte Nº ${esc(numero)} enviado a la oficina. <a href="#oficina">Verlo en Oficina</a>`; s.hidden = false;
+    const s = $('#p-sent');
+    s.innerHTML = window.papCola && window.papCola() > 0
+      ? `Parte Nº ${esc(numero)} <b>guardado en el móvil</b>. Ahora no hay cobertura: se enviará solo a la oficina en cuanto vuelva la señal. No borres los datos del navegador hasta entonces.`
+      : `Parte Nº ${esc(numero)} enviado a la oficina. <a href="#oficina">Verlo en Oficina</a>`;
+    s.hidden = false;
     window.scrollTo({top: 0, behavior: 'smooth'});
   }
   renderParteDyn();
@@ -2851,6 +2855,7 @@ function errorIA(e){
   if (c === 'invalid_json' || c === 'empty_completion') return 'No se ha entendido la respuesta al leer el parte. Vuelve a intentarlo.';
   if (e && e.message && /PDF/i.test(e.message)) return 'No se ha podido abrir el PDF. Prueba con una foto del parte.';
   if (e && e.message === 'imagen') return 'No se ha podido abrir la imagen. Prueba con una foto en JPG o PNG.';
+  if (c === 'unavailable' && navigator.onLine === false) return 'Sin cobertura no se puede leer la foto. La foto queda adjunta: rellena el parte a mano y se enviará al volver la señal.';
   if (c === 'timeout') return 'Gemini no ha contestado en 3 minutos. Vuelve a intentarlo; si se repite, rellena el parte a mano.';
   return 'Ha fallado la lectura del parte' + (e && e.message ? ` (${e.message})` : '') + '. Vuelve a intentarlo.';
 }

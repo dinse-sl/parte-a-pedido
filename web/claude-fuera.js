@@ -20,6 +20,42 @@
   }
 
   function error(msg, code) { var e = new Error(msg); e.code = code || 'error'; return e; }
+  function esDeRed(e) { return !!e && (e.code === 'unavailable' || e.code === 'timeout'); }
+
+  /* ---------- Guardado en el móvil (IndexedDB): datos, cola de envíos y fotos pendientes ---------- */
+  var idb = (function () {
+    var p = null;
+    function abrir() {
+      if (p) return p;
+      p = new Promise(function (ok, ko) {
+        if (!window.indexedDB) { ko(new Error('sin indexedDB')); return; }
+        var r = indexedDB.open('parte-a-pedido', 1);
+        r.onupgradeneeded = function () { r.result.createObjectStore('kv'); };
+        r.onsuccess = function () { ok(r.result); };
+        r.onerror = function () { ko(r.error); };
+      });
+      p.catch(function () { p = null; });
+      return p;
+    }
+    function tx(modo, fn) {
+      return abrir().then(function (base) {
+        return new Promise(function (ok, ko) {
+          var t = base.transaction('kv', modo), req = fn(t.objectStore('kv'));
+          t.oncomplete = function () { ok(req && req.result); };
+          t.onerror = function () { ko(t.error); };
+        });
+      });
+    }
+    return {
+      get: function (k) { return tx('readonly', function (st) { return st.get(k); }).catch(function () { return undefined; }); },
+      set: function (k, v) { return tx('readwrite', function (st) { return st.put(v, k); }).catch(function () {}); },
+      del: function (k) { return tx('readwrite', function (st) { return st.delete(k); }).catch(function () {}); }
+    };
+  })();
+  /* copia de la web en el móvil para abrir sin cobertura */
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
+  }
   function llamar(accion, datos, signal, maxMs) {
     var cuerpo = Object.assign({accion: accion, codigo: codigo}, datos || {});
     /* tiempo máximo: si el servidor no contesta, se avisa en vez de quedarse cargando */
@@ -83,8 +119,14 @@
   }
   function entrar() {
     if (sesion) return sesion;
-    sesion = (codigo ? llamar('entrar', {conDatos: true}).catch(function (e) { return pedirCodigo(e.code === 'no_autorizado' ? 'El código guardado ya no vale.' : ''); }) : pedirCodigo(''))
+    sesion = (codigo ? llamar('entrar', {conDatos: true}).catch(function (e) {
+        /* sin cobertura: si este móvil ya había entrado, se sigue con lo guardado */
+        var rol = null; try { rol = localStorage.getItem('pap-rol'); } catch (_) {}
+        if (esDeRed(e) && rol) { enLinea(false); return {rol: rol, ia: true, sinConexion: true}; }
+        return pedirCodigo(e.code === 'no_autorizado' ? 'El código guardado ya no vale.' : '');
+      }) : pedirCodigo(''))
       .then(function (j) {
+        try { localStorage.setItem('pap-rol', j.rol); } catch (_) {}
         mostrarSalir(j.rol);
         if (j.datos) cargarDatos(j.datos);
         setTimeout(precargarCatalogo, 1500); /* el catálogo se prepara en segundo plano */
@@ -129,21 +171,99 @@
     var nuevo = {};
     (j.docs || []).forEach(function (d) { (nuevo[d.col] = nuevo[d.col] || {})[d.id] = d.data; });
     datos = nuevo; ver = j.ver; listo = true;
+    aplicarCola(); guardarCopia();
     avisarTodo();
+  }
+  /* última copia de los datos en el móvil: la app abre con ella y sin cobertura */
+  var copiaT = null;
+  function guardarCopia() { clearTimeout(copiaT); copiaT = setTimeout(function () { idb.set('datos', {datos: datos, ver: ver}); }, 500); }
+  var arranque = Promise.all([idb.get('datos'), idb.get('cola')]).then(function (r) {
+    cola = Array.isArray(r[1]) ? r[1] : [];
+    if (r[0] && r[0].datos && !listo) { datos = r[0].datos; ver = null; listo = true; aplicarCola(); avisarTodo(); }
+    pintarCola(); procesarCola();
+  });
+
+  /* ---------- Cola: lo que se guarda sin cobertura se envía solo cuando vuelve ---------- */
+  var cola = [], procesando = false, ultimoFallo = '';
+  function guardarCola() { return idb.set('cola', cola); }
+  function aplicarOp(op) {
+    if (op.accion === 'foto') return;
+    var m = datos[op.col] = datos[op.col] || {};
+    if (op.accion === 'guardar') m[op.id] = clon(op.data);
+    else if (op.accion === 'actualizar') m[op.id] = Object.assign({}, m[op.id] || {}, clon(op.data));
+    else if (op.accion === 'borrar') delete m[op.id];
+  }
+  function aplicarCola() { cola.forEach(aplicarOp); }
+  function encolar(op) { op.n = Date.now() + Math.random(); cola.push(op); guardarCola(); pintarCola(); }
+  function cambiarId(viejo, nuevo) {
+    /* la foto ya subida: su id provisional se cambia por el de Drive en lo que queda por enviar y en pantalla */
+    cola.forEach(function (op) { if (op.data) op.data = JSON.parse(JSON.stringify(op.data).split(viejo).join(nuevo)); });
+    Object.keys(datos).forEach(function (c) { Object.keys(datos[c]).forEach(function (id) { if (datos[c][id] && datos[c][id].foto === viejo) datos[c][id].foto = nuevo; }); });
+  }
+  function procesarCola() {
+    if (procesando || !cola.length) return Promise.resolve();
+    procesando = true;
+    var op = cola[0];
+    var envio = op.accion === 'foto'
+      ? llamar('foto', {b64: op.b64, mime: op.mime}, null, 120000).then(function (j) { cambiarId(op.tempId, j.id); fotosLocales[j.id] = fotosLocales[op.tempId]; })
+      : llamar(op.accion, {col: op.col, id: op.id, data: op.data});
+    return envio.then(function () {
+      cola.shift(); enLinea(true);
+      return guardarCola().then(function () { procesando = false; pintarCola(); if (cola.length) return procesarCola(); ver = null; sincronizar(); });
+    }, function (e) {
+      procesando = false;
+      if (esDeRed(e)) { enLinea(false); pintarCola(); return; }
+      /* el servidor lo rechaza (permiso, dato no válido…): se aparta para no bloquear lo demás */
+      console.error('No se pudo enviar un cambio guardado:', e);
+      ultimoFallo = e.message || 'error'; cola.shift(); guardarCola(); pintarCola();
+      if (cola.length) return procesarCola();
+    });
+  }
+  window.addEventListener('online', function () { enLinea(true); procesarCola(); sincronizar(); });
+  window.addEventListener('offline', function () { enLinea(false); });
+  setInterval(function () { if (cola.length && !document.hidden) procesarCola(); }, 20000);
+  window.papCola = function () { return cola.length; };
+
+  /* ---------- Aviso de «sin cobertura» y de lo pendiente de enviar ---------- */
+  var conexion = true;
+  function enLinea(v) { if (conexion !== v) { conexion = v; pintarCola(); } }
+  function pintarCola() {
+    if (!document.body) { setTimeout(pintarCola, 200); return; }
+    var el = document.getElementById('pap-cola');
+    var n = cola.filter(function (op) { return op.accion !== 'foto'; }).length, fotosPend = cola.length - n;
+    var sin = !conexion || (navigator.onLine === false);
+    if (!n && !fotosPend && !sin && !ultimoFallo) { if (el) el.remove(); return; }
+    if (!el) {
+      el = document.createElement('div'); el.id = 'pap-cola'; el.setAttribute('role', 'status');
+      el.setAttribute('style', 'position:fixed;left:8px;bottom:8px;z-index:9999;max-width:calc(100% - 140px);font:13px/1.35 system-ui,sans-serif;padding:7px 11px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,.18)');
+      document.body.appendChild(el);
+    }
+    var partesPend = cola.filter(function (op) { return op.col === 'partes' && op.accion === 'guardar'; }).length;
+    var txt = sin ? 'Sin cobertura' : 'Enviando lo guardado…';
+    if (n || fotosPend) txt += ' · ' + (partesPend ? partesPend + ' parte' + (partesPend > 1 ? 's' : '') + ' ' : (n + ' cambio' + (n > 1 ? 's' : '') + ' ')) + 'pendiente' + ((partesPend || n) > 1 ? 's' : '') + (fotosPend ? ' (con foto)' : '') + ': se envía solo al volver la cobertura';
+    else if (sin) txt += ' · Puedes seguir trabajando: lo que guardes se envía al volver la señal';
+    if (ultimoFallo && !n) txt = 'Un cambio guardado no se pudo enviar: ' + ultimoFallo;
+    el.textContent = txt;
+    el.style.background = sin ? '#FFECD0' : '#DBF1E3'; el.style.color = sin ? '#5c3500' : '#0f4d2b'; el.style.border = '1px solid ' + (sin ? '#d99a3a' : '#5cae7f');
   }
   var sincronizando = null, pendiente = false;
   function sincronizar() {
     if (sincronizando) { pendiente = true; return sincronizando; }
     sincronizando = llamar('leer', {ver: ver}).then(function (j) {
+      enLinea(true);
       if (!j.igual) {
         var nuevo = {};
         (j.docs || []).forEach(function (d) { (nuevo[d.col] = nuevo[d.col] || {})[d.id] = d.data; });
         datos = nuevo;
+        aplicarCola(); /* lo pendiente de enviar sigue viéndose */
+        guardarCopia();
       }
       ver = j.ver;
       var primera = !listo; listo = true;
       if (!j.igual || primera) avisarTodo();
+      if (cola.length) procesarCola();
     }).catch(function (e) {
+      if (esDeRed(e)) enLinea(false);
       Object.keys(oyentesCol).forEach(function (c) { (oyentesCol[c] || []).forEach(function (o) { if (o.err && !listo) o.err(e); }); });
     }).then(function () { sincronizando = null; if (pendiente) { pendiente = false; sincronizar(); } });
     return sincronizando;
@@ -161,8 +281,12 @@
     if (accion === 'guardar') m[id] = clon(data);
     else if (accion === 'actualizar') m[id] = Object.assign({}, m[id] || {}, clon(data));
     else if (accion === 'borrar') delete m[id];
-    avisar(col, id);
-    return llamar(accion, {col: col, id: id, data: data}).then(function (j) { if (j.ver) ver = null; sincronizar(); }, function (e) {
+    avisar(col, id); guardarCopia();
+    var op = {accion: accion, col: col, id: id, data: data};
+    /* si ya hay cosas esperando, esta va detrás para respetar el orden */
+    if (cola.length) { encolar(op); procesarCola(); return Promise.resolve(); }
+    return llamar(accion, {col: col, id: id, data: data}).then(function (j) { enLinea(true); if (j.ver) ver = null; sincronizar(); }, function (e) {
+      if (esDeRed(e)) { enLinea(false); encolar(op); return; } /* sin cobertura: se queda en el móvil y se envía después */
       if (antes === undefined) delete m[id]; else m[id] = antes;
       avisar(col, id);
       if (e.code === 'sin_permiso') e.code = 'invalid_argument';
@@ -177,7 +301,7 @@
         doc: function (id) { return db.doc(col + '/' + id); },
         onSnapshot: function (fn, err) {
           var o = {fn: fn, err: err}; (oyentesCol[col] = oyentesCol[col] || []).push(o);
-          if (listo) fn(snapCol(col)); else sincronizar();
+          arranque.then(function () { if (listo) fn(snapCol(col)); sincronizar(); });
           arrancarSondeo();
           return function () { oyentesCol[col] = oyentesCol[col].filter(function (x) { return x !== o; }); };
         }
@@ -193,7 +317,7 @@
         get: function () { return sincronizar().then(function () { return snapDoc(path); }); },
         onSnapshot: function (fn, err) {
           var o = {fn: fn, err: err}; (oyentesDoc[path] = oyentesDoc[path] || []).push(o);
-          if (listo) fn(snapDoc(path)); else sincronizar();
+          arranque.then(function () { if (listo) fn(snapDoc(path)); else sincronizar(); });
           arrancarSondeo();
           return function () { oyentesDoc[path] = oyentesDoc[path].filter(function (x) { return x !== o; }); };
         }
@@ -323,18 +447,33 @@
   };
 
   /* ---------- Fotos de los partes (se guardan en Google Drive) ---------- */
-  var fotos = {};
+  var fotos = {}, fotosLocales = {};
   var assets = {
     upload: function (blob) {
-      return aBase64(blob).then(function (b64) { return llamar('foto', {b64: b64, mime: blob.type || 'image/jpeg'}, null, 120000); }).then(function (j) { return {id: j.id}; });
+      var mime = blob.type || 'image/jpeg';
+      return aBase64(blob).then(function (b64) {
+        var pendiente = function () {
+          var temp = 'pend-' + nuevoId();
+          fotosLocales[temp] = 'data:' + mime + ';base64,' + b64;
+          encolar({accion: 'foto', tempId: temp, b64: b64, mime: mime});
+          return {id: temp};
+        };
+        if (cola.length) return pendiente();
+        return llamar('foto', {b64: b64, mime: mime}, null, 120000).then(function (j) { enLinea(true); return {id: j.id}; }, function (e) {
+          if (esDeRed(e)) { enLinea(false); return pendiente(); }
+          throw e;
+        });
+      });
     }
   };
   function cargarFotos(raiz) {
     (raiz.querySelectorAll ? raiz.querySelectorAll('img[src^="/_blob/"]') : []).forEach(function (img) {
       var id = img.getAttribute('src').slice(7);
       img.removeAttribute('src'); img.dataset.fotoId = id;
-      if (!fotos[id]) fotos[id] = llamar('verfoto', {id: id}).then(function (j) { return 'data:' + j.mime + ';base64,' + j.b64; });
-      fotos[id].then(function (u) { if (img.dataset.fotoId === id) img.src = u; }, function () { img.alt = 'No se ha podido cargar la foto'; });
+      if (!fotos[id]) fotos[id] = fotosLocales[id] ? Promise.resolve(fotosLocales[id])
+        : (/^pend-/.test(id) ? Promise.resolve((cola.filter(function (op) { return op.tempId === id; })[0] || {}).b64).then(function (b) { if (!b) throw error('sin foto'); return 'data:image/jpeg;base64,' + b; })
+        : llamar('verfoto', {id: id}).then(function (j) { return 'data:' + j.mime + ';base64,' + j.b64; }));
+      fotos[id].then(function (u) { if (img.dataset.fotoId === id) img.src = u; }, function () { delete fotos[id]; img.alt = 'No se ha podido cargar la foto'; });
     });
   }
   new MutationObserver(function (ms) { ms.forEach(function (m) { m.addedNodes.forEach(function (n) { if (n.nodeType === 1) { if (n.matches && n.matches('img[src^="/_blob/"]')) cargarFotos(n.parentNode || document); else cargarFotos(n); } }); }); })
